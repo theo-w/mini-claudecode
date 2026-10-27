@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import warnings
 import json
+import ast
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -14,11 +15,12 @@ USE_LOCAL = True
 MAX_OBSERVATION_LEN = 1500  # 工具返回截断上限
 MAX_TOOL_RETRY = 2          # 工具调用出错最大重试次数
 DEBUG = False                # 打开可以打印原始消息
+WORKSPACE = Path.cwd().resolve()  # 允许读写的根目录
 
 if USE_LOCAL:
     BASE_URL = "http://127.0.0.1:11434/v1"
     API_KEY = "dummy"
-    MODEL = "qwen2.5:7b-instruct"
+    MODEL = "glm-4.7-flash:latest"
 else:
     BASE_URL = "https://api.deepseek.com"
     API_KEY = os.getenv("DEEPSEEK_API_KEY")
@@ -26,6 +28,9 @@ else:
 
 # shell 黑名单，包含高危操作
 SHELL_BLACKLIST = {"rm", "sudo", "chmod", "chown", "dd", "> /", ">> /", "mkfs", "passwd"}
+# python沙箱禁止的模块/函数
+PY_BLACK_IMPORT = {"subprocess", "pty", "os"}
+PY_BLACK_CALL = {"system", "popen", "fork", "exec", "spawn"}
 # ==========================================
 
 client = OpenAI(
@@ -50,78 +55,132 @@ TOOLS = [
     },
     {
         "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "读取本地文本文件全部内容，用于查看源码",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string"}
-                },
-                "required": ["file_path"]
-            }
+        "name": "read_file",
+        "description": "读取本地文本文件全部内容，用于查看源码",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"}
+            },
+            "required": ["file_path"]
         }
     },
     {
         "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "写入/覆盖文本文件。谨慎使用，会覆盖原有内容",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string"},
-                    "content": {"type": "string"}
-                },
-                "required": ["file_path", "content"]
-            }
+        "name": "write_file",
+        "description": "写入/覆盖文本文件。谨慎使用，会覆盖原有内容",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "content": {"type": "string"}
+            },
+            "required": ["file_path", "content"]
         }
     },
     {
         "type": "function",
-        "function": {
-            "name": "grep",
-            "description": "在文件内搜索匹配文本",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string"},
-                    "pattern": {"type": "string"}
-                },
-                "required": ["file_path", "pattern"]
-            }
+        "name": "grep",
+        "description": "在文件内搜索匹配文本",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "pattern": {"type": "string"}
+            },
+            "required": ["file_path", "pattern"]
         }
     },
     {
         "type": "function",
-        "function": {
-            "name": "find",
-            "description": "递归查找文件，按名称关键词搜索",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "root": {"type": "string"},
-                    "name_pattern": {"type": "string"}
-                },
-                "required": ["root", "name_pattern"]
-            }
+        "name": "find",
+        "description": "递归查找文件，按名称关键词搜索",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "root": {"type": "string"},
+                "name_pattern": {"type": "string"}
+            },
+            "required": ["root", "name_pattern"]
         }
     },
     {
         "type": "function",
-        "function": {
-            "name": "run_shell",
-            "description": "执行shell命令，仅限用户明确要求时调用，风险很高",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "cmd": {"type": "string"}
-                },
-                "required": ["cmd"]
-            }
+        "name": "run_shell",
+        "description": "执行shell命令，仅限用户明确要求时调用，风险很高",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cmd": {"type": "string"}
+            },
+            "required": ["cmd"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "run_python",
+        "description": "执行Python代码。所有Python脚本必须通过此工具调用，禁止直接输出代码块",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "待执行的Python代码"}
+            },
+            "required": ["code"]
         }
     }
 ]
+
+# ========== 公共校验 ==========
+def _is_path_safe(file_path: str) -> tuple[bool, str]:
+    try:
+        p = Path(file_path).resolve()
+        if not str(p).startswith(str(WORKSPACE)):
+            return False, f"路径越权拦截：{file_path} 不在工作目录 {WORKSPACE}"
+        return True, "ok"
+    except Exception as e:
+        return False, f"路径解析失败：{str(e)}"
+
+def _ast_python_sandbox(code: str) -> tuple[bool, str]:
+    """AST语法树检测高危导入、函数调用、open/Path字面路径"""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return False, f"语法错误：{e.msg}"
+
+    for node in ast.walk(tree):
+        # import xxx / from xxx import ...
+        if isinstance(node, ast.Import):
+            for n in node.names:
+                top = n.name.split(".")[0]
+                if top in PY_BLACK_IMPORT:
+                    return False, f"沙箱拦截：禁止导入模块 {top}"
+        if isinstance(node, ast.ImportFrom):
+            if node.module:
+                top = node.module.split(".")[0]
+                if top in PY_BLACK_IMPORT:
+                    return False, f"沙箱拦截：禁止导入模块 {top}"
+        # 函数调用检测
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                fname = node.func.id
+                if fname in PY_BLACK_CALL:
+                    return False, f"沙箱拦截：禁止调用函数 {fname}"
+
+            # open("路径")
+            if isinstance(node.func, ast.Name) and node.func.id == "open":
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    fp = node.args[0].value
+                    safe, msg = _is_path_safe(fp)
+                    if not safe:
+                        return False, f"沙箱路径拦截：{msg}"
+            # Path("路径")
+            if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "Path":
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    fp = node.args[0].value
+                    safe, msg = _is_path_safe(fp)
+                    if not safe:
+                        return False, f"沙箱路径拦截：{msg}"
+    return True, "ok"
 
 # ========== Tool Implement ==========
 def _truncate(text: str) -> str:
@@ -130,6 +189,9 @@ def _truncate(text: str) -> str:
     return text
 
 def ls(dir_path: str) -> str:
+    safe, msg = _is_path_safe(dir_path)
+    if not safe:
+        return f"[ls reject] {msg}"
     try:
         p = Path(dir_path)
         entries = list(p.iterdir())
@@ -143,6 +205,9 @@ def ls(dir_path: str) -> str:
         return f"[ls error] {str(e)}"
 
 def read_file(file_path: str) -> str:
+    safe, msg = _is_path_safe(file_path)
+    if not safe:
+        return f"[read reject] {msg}"
     try:
         p = Path(file_path)
         content = p.read_text(encoding="utf-8")
@@ -151,6 +216,9 @@ def read_file(file_path: str) -> str:
         return f"[read error] {str(e)}"
 
 def write_file(file_path: str, content: str) -> str:
+    safe, msg = _is_path_safe(file_path)
+    if not safe:
+        return f"[write reject] {msg}"
     try:
         p = Path(file_path)
         p.write_text(content, encoding="utf-8")
@@ -159,6 +227,9 @@ def write_file(file_path: str, content: str) -> str:
         return f"[write error] {str(e)}"
 
 def grep(file_path: str, pattern: str) -> str:
+    safe, msg = _is_path_safe(file_path)
+    if not safe:
+        return f"[grep reject] {msg}"
     try:
         p = Path(file_path)
         lines = p.read_text(encoding="utf-8").splitlines()
@@ -172,6 +243,9 @@ def grep(file_path: str, pattern: str) -> str:
         return f"[grep error] {str(e)}"
 
 def find(root: str, name_pattern: str) -> str:
+    safe, msg = _is_path_safe(root)
+    if not safe:
+        return f"[find reject] {msg}"
     res = []
     try:
         for fp in Path(root).rglob(f"*{name_pattern}*"):
@@ -203,13 +277,26 @@ def run_shell(cmd: str) -> str:
     except Exception as e:
         return f"[shell error] {str(e)}"
 
+def run_python(code: str) -> str:
+    safe, msg = _ast_python_sandbox(code)
+    if not safe:
+        return f"[python sandbox reject] {msg}"
+    try:
+        # 隔离执行，捕获命名空间
+        ns = {}
+        exec(code, ns)
+        return f"[python exec done] {str(ns)}"
+    except Exception as e:
+        return f"[python runtime error] {str(e)}"
+
 TOOL_REGISTRY = {
     "ls": ls,
     "read_file": read_file,
     "write_file": write_file,
     "grep": grep,
     "find": find,
-    "run_shell": run_shell
+    "run_shell": run_shell,
+    "run_python": run_python
 }
 
 def dispatch_tool(name: str, args: dict):
@@ -282,17 +369,18 @@ if __name__ == "__main__":
         "role": "system",
         "content": """
 你是本地代码助手。严格遵守规则：
+【强制最高优先级规则】任何需要执行Python代码时，**禁止直接输出```python代码块**，必须调用 run_python 工具。直接输出代码块属于违规。
 1. 用户明确要求读取某个文件，才调用 read_file；
 2. 用户只输入 ls .，只列出目录，不要主动读取目录里所有文件；
 3. write_file 覆盖风险高，必须确认用户意图；
 4. run_shell 风险很高，只有用户明确要求执行命令时才调用；
-5. 完成用户当前请求后，停止工具调用，直接输出回答。
-6. 输出工具调用时，严格使用标准tool_call格式，不要自然语言描述调用。
+5. 输出工具调用时，严格使用标准tool_call格式，不要自然语言描述调用；
+6. 完成用户当前请求后，停止工具调用，直接输出回答。
 """
     }
     conversation_msgs = [system_prompt]
-    print("===== Mini-ClaudeCode v0.2 =====")
-    print("支持工具：ls, read_file, write_file, grep, find, run_shell")
+    print("===== Mini-ClaudeCode v0.2 AST沙箱增强版 =====")
+    print("支持工具：ls, read_file, write_file, grep, find, run_shell, run_python")
     print("clear 清空上下文 | exit 退出\n")
     while True:
         user_input = input("📝 任务 > ").strip()
