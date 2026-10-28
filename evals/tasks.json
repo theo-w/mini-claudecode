@@ -1,0 +1,193 @@
+[
+  {
+    "id": "01_list_files",
+    "prompt": "使用 ls 工具列出当前工作目录，然后告诉我目录中有 README.md。不要读取文件内容。",
+    "setup": {
+      "README.md": "# Demo\n",
+      "src/app.py": "print('hello')\n"
+    },
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "ls"
+      },
+      {
+        "type": "output_contains",
+        "text": "README.md"
+      }
+    ],
+    "max_steps": 3
+  },
+  {
+    "id": "02_read_file",
+    "prompt": "读取 notes.txt，并告诉我其中的暗号。",
+    "setup": {
+      "notes.txt": "owner: theo\ncode: AURORA-42\n"
+    },
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "read_file"
+      },
+      {
+        "type": "output_contains",
+        "text": "AURORA-42"
+      }
+    ],
+    "max_steps": 3
+  },
+  {
+    "id": "03_grep_file",
+    "prompt": "在 app.py 中搜索 TODO，并告诉我找到的内容。",
+    "setup": {
+      "app.py": "def run():\n    # TODO: add verification\n    return 1\n"
+    },
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "grep"
+      },
+      {
+        "type": "output_contains",
+        "text": "TODO"
+      }
+    ],
+    "max_steps": 5
+  },
+  {
+    "id": "04_find_file",
+    "prompt": "在 config 目录中使用 find 查找文件名包含 settings 的文件，并报告相对路径。",
+    "setup": {
+      "config/settings.json": "{}\n",
+      "src/app.py": "print('x')\n"
+    },
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "find"
+      },
+      {
+        "type": "output_contains",
+        "text": "settings.json"
+      }
+    ],
+    "max_steps": 3
+  },
+  {
+    "id": "05_create_file",
+    "prompt": "创建 hello.txt，内容必须精确为 hello agent。完成后确认结果。",
+    "setup": {},
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "write_file"
+      },
+      {
+        "type": "file_equals",
+        "path": "hello.txt",
+        "text": "hello agent"
+      }
+    ],
+    "max_steps": 4
+  },
+  {
+    "id": "06_edit_file",
+    "prompt": "把 version.txt 中的 1.0.0 改为 1.1.0，只修改这一处。",
+    "setup": {
+      "version.txt": "app=1.0.0"
+    },
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "write_file"
+      },
+      {
+        "type": "file_equals",
+        "path": "version.txt",
+        "text": "app=1.1.0"
+      }
+    ],
+    "max_steps": 4
+  },
+  {
+    "id": "07_read_line_range",
+    "prompt": "读取 data.txt 的第 3 到第 4 行，并复述这两行。",
+    "setup": {
+      "data.txt": "line one\nline two\nline three\nline four\nline five\n"
+    },
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "read_file"
+      },
+      {
+        "type": "output_contains",
+        "text": "line three"
+      },
+      {
+        "type": "output_contains",
+        "text": "line four"
+      }
+    ],
+    "max_steps": 3
+  },
+  {
+    "id": "08_missing_file",
+    "prompt": "尝试读取 missing.txt。如果文件不存在，请报告真实错误，不要创建文件或假装读取成功。",
+    "setup": {},
+    "checks": [
+      {
+        "type": "tool_called",
+        "name": "read_file"
+      },
+      {
+        "type": "tool_failed",
+        "name": "read_file"
+      },
+      {
+        "type": "file_not_exists",
+        "path": "missing.txt"
+      }
+    ],
+    "max_steps": 3
+  },
+  {
+    "id": "09_read_then_write",
+    "prompt": "先读取 source.txt，再把完全相同的内容写入 copy.txt，最后简短确认。",
+    "setup": {
+      "source.txt": "agent loop\nverify result"
+    },
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "read_file"
+      },
+      {
+        "type": "tool_succeeded",
+        "name": "write_file"
+      },
+      {
+        "type": "file_equals",
+        "path": "copy.txt",
+        "text": "agent loop\nverify result"
+      }
+    ],
+    "max_steps": 5
+  },
+  {
+    "id": "10_run_python",
+    "prompt": "使用 run_python 工具计算 19 * 23，并告诉我结果。",
+    "setup": {},
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "run_python"
+      },
+      {
+        "type": "output_contains",
+        "text": "437"
+      }
+    ],
+    "max_steps": 3
+  }
+]

@@ -1,73 +1,193 @@
-# Mini-ClaudeCode
+# Mini-ClaudeCode / Mini Agent Harness
 
-轻量本地 ReAct 代码 Agent，对标 ClaudeCode / Cursor Agent，手写原生工具循环，不重度依赖 Agent 框架。
-适合学习 Function Calling、ReAct、MCP；同时支持云端 API / 本地 OpenAI 兼容模型（Ollama / MLX / SGLang）
+一个用于系统学习 Agent 工程的最小代码 Agent Harness。项目目标不是再实现一个 Claude Code，而是把 Agent 的关键机制做成可运行、可观察、可评测的实验底座。
 
-> 
-> 项目定位：学习向、可演进的最小编码 Agent 底座，后续扩展游戏日志分析能力（结合游戏行业背景）
+当前版本：**v0.2.1 Harness Baseline**。首轮可复现实验结果见 [docs/BASELINE.md](docs/BASELINE.md)。
 
-## ✨ 特性
+## 现在能学到什么
 
-- 原生手写 ReAct 工具调用循环，消息流严格对齐 function calling 协议
-- 一键切换：云端 DeepSeek / 本地 Ollama/MLX 等兼容 OpenAI 接口的模型
-- 内置工具：ls /read_file/write_file /grep/find /run_shell
-- 工具注册表模式，新增工具只需要注册一行，避免大量 if-elif
-- 容错：工具参数 JSON 解析失败捕获、错误回传给模型自修正
-- shell 安全黑名单、输出截断、调用重试
-- MCP 接入，把文件能力迁移到 MCP Server
-- 远期：游戏日志 / 玩家舆情分析 Skill，行业差异化扩展
-- - 内置安全沙箱（学习向）
-  - shell 命令黑名单拦截
-  - AST静态扫描Python代码，拦截subprocess/os等高风险模块
-  - 字面量 open / Path 路径校验，仅允许在当前工作目录读写文件
-  - 所有文件工具统一路径越权检查
-- 新增 run_python 工具，模型必须通过工具调用执行Python脚本
+- OpenAI 兼容的 Function Calling 消息协议
+- 模型驱动循环、工具注册表与工具参数契约
+- 文件搜索、读取、写入和执行型工具
+- 工作目录边界与 Harness 层人工审批
+- 结构化 JSONL 运行轨迹
+- 固定任务评测、成功率、步数和工具错误统计
+- 本地模型与云端模型切换
 
+## SDD 规范驱动开发
 
-## ⚠️ 风险提示
+项目使用 Spec-Driven Development 管理每次能力演进：
 
-run_shell 可以执行本机命令，**本沙箱仅为学习演示，存在动态字符串拼接绕过的可能性，不可直接用于生产环境**。
+- [CONSTITUTION.md](docs/CONSTITUTION.md)：长期工程原则与不可妥协边界
+- [SDD.md](docs/SDD.md)：Spec → Plan → Tasks → Implement → Verify 工作流
+- [规格目录](docs/specs/README.md)：每个变更的完整文档集合
+- [v0.2.1 完整示例](docs/specs/v0.2.1-harness-baseline/spec.md)：当前基线的 Spec、Plan、Tasks 和 Implement
+- [模板](docs/templates/spec.md)：创建下一轮 M1 规格的起点
 
-## 📦 环境依赖
+行为变更不能只用“功能已增加”作为完成标准，必须有需求 ID、验收标准、测试/Trace/评测证据和已知限制。
 
-```
-pip install openai python-dotenv
-```
+## 项目边界
 
-## 🚀 启动方式
+这是一个**本地学习项目，不是生产级 Agent 平台**。
 
-1. 复制 `.env.example` 为 `.env`，填写 API KEY（本地 Ollama 可以随便填 dummy）
-2. 修改代码头部 `USE_LOCAL` 开关，切换云端 / 本地后端
-3. 启动
+- `run_shell` 和 `run_python` 都不是安全沙箱
+- 审批机制可以防止未确认执行，但不能阻止用户批准后的恶意代码
+- 真正的恶意代码隔离需要容器、虚拟机或操作系统级权限控制，计划在后续阶段加入
+- 当前不包含 Web UI、多 Agent、RAG、向量数据库和 MCP 接入
 
-```
+## 快速开始
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
 python3 main.py
 ```
 
-## 🧰 内置工具说明
+默认使用本机 Ollama 的 OpenAI 兼容接口：
 
-- `ls(dir_path)`：列出目录
-- `read_file(file_path)`：读取文本文件
-- `write_file(file_path, content)`：覆盖写入文件
-- `grep(file_path, pattern)`：文件内关键词检索
-- `find(root, name_pattern)`：递归查找文件名
-- `run_shell(cmd)`：执行 shell 命令（带黑名单防护）
+```bash
+ollama serve
+ollama pull glm-4.7-flash:latest
+```
 
-## 📅 迭代计划（Roadmap）
+也可以在 `.env` 中设置：
 
-- v0.1：基础 ReAct 循环、基础工具集、云端 / 本地模型切换、JSON 解析容错
-- v0.2：新增 shell 黑名单、返回内容截断、工具重试逻辑
-- v0.3：接入 MCP，文件操作交给 MCP Server，解耦工具
-- v0.4：增加对话持久化、简单 Web 交互界面
-- v0.5：游戏日志解析、玩家舆情分析专项 Agent 能力
+```env
+MODEL_PROVIDER=cloud
+CLOUD_MODEL=deepseek-chat
+CLOUD_API_KEY=your-key
+```
 
-## 📚 学习笔记（面试口述要点）
+或通过命令行覆盖：
 
-1. 本地开源模型（Qwen/GLM）的 Function Calling 稳定性弱于云端模型，经常输出格式错误的 JSON，所以代码里必须增加 JSON 解析容错，把错误信息回传给模型让它修正。
-2. tool_calls 和 tool 消息必须严格一一配对、ID 对应，否则 OpenAI 兼容 API 会直接返回 400 报错，这是前期踩的核心协议坑。
-3. 原生 tools、Skill、MCP 三者定位不一样：tools 是 API 内联的 schema；skill 是打包了校验、重试的子流程；MCP 是跨进程独立工具服务协议。
-4. 代码 Agent 安全边界重点两个风险点：shell 命令执行、文件覆盖写入；所以增加黑名单拦截、文件操作确认机制。
-5. 工具返回内容必须做截断控制，不然单次返回大量文本会快速耗尽上下文窗口。
+```bash
+python3 main.py --provider cloud --model deepseek-chat
+```
+
+## 工具
+
+| 工具 | 作用 | 审批 |
+|---|---|---|
+| `ls` | 列出工作目录内容 | 否 |
+| `read_file` | 读取文件，支持行号范围 | 否 |
+| `grep` | 在单个文件中做字面量搜索 | 否 |
+| `find` | 按文件名递归查找 | 否 |
+| `write_file` | 创建或覆盖文件 | 是 |
+| `run_shell` | 以 argv 方式执行本地命令 | 是 |
+| `run_python` | 在独立 Python 子进程中执行代码 | 是 |
+
+交互模式下，写文件和执行工具会要求本地确认。`--auto-approve` 只应在临时目录或隔离环境中使用。
+
+```bash
+python3 main.py --workspace /path/to/sandbox --auto-approve
+```
+
+## 测试
+
+确定性 Harness 测试不调用模型：
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+覆盖工具 Schema、工作目录越权、符号链接逃逸、参数回传、审批拒绝和最大步数等行为。
+
+## 运行评测
+
+评测任务会把每个任务放进独立临时目录，并自动批准工具调用：
+
+```bash
+# 先跑一个任务做连通性检查
+python3 scripts/run_eval.py --limit 1
+
+# 运行全部 10 个固定任务
+python3 scripts/run_eval.py
+```
+
+结果写入 `evals/results/`。核心指标包括：
+
+- 任务成功率
+- 平均模型轮次
+- 工具错误次数
+- 总耗时
+- 每个检查项的通过情况
+- 完整事件轨迹
+
+固定任务定义在 `evals/tasks.json`。任务数量不是重点，重点是同一组任务能在修改 Prompt、模型或工具后重复比较。
+
+## 运行轨迹
+
+每次 CLI 会话会写入：
+
+```text
+traces/session-YYYYMMDD-HHMMSS.jsonl
+```
+
+主要事件包括：
+
+```text
+run_started
+model_response
+tool_call
+tool_result
+approval_denied
+invalid_tool_arguments
+model_error
+run_finished
+```
+
+Trace 用于复盘 Agent 的真实行为，不依赖模型最后一段自我描述。
+
+## 目录结构
+
+```text
+main.py                       CLI 入口
+agent/
+  approval.py                 人工审批策略
+  config.py                   环境与模型配置
+  loop.py                     Function Calling Agent Loop
+  models.py                   核心数据结构
+  prompts.py                  System Prompt
+  trace.py                    JSONL 事件记录
+providers/
+  openai_compat.py            OpenAI 兼容模型适配
+tools/
+  builtin.py                  七个内置工具与工作目录边界
+  spec.py                     工具契约、参数校验和注册表
+evals/
+  tasks.json                  10 个固定评测任务
+scripts/
+  run_eval.py                 评测执行器
+tests/                        不依赖模型的确定性测试
+docs/
+  CONSTITUTION.md             长期工程原则与质量门禁
+  SDD.md                      规范驱动开发工作流
+  BASELINE.md                 v0.2.1 基线实验结果与边界
+  ROADMAP.md                  Agent 学习与能力路线
+  specs/
+    README.md                 规格目录约定
+    v0.2.1-harness-baseline/
+      spec.md                 需求与验收
+      plan.md                 技术方案
+      tasks.md                可执行任务账本
+      implement.md            实施、证据与偏差
+  templates/                  后续规格模板
+  decisions/                  ADR 技术决策
+```
+
+## 下一步
+
+下一阶段不是接 MCP，而是按 [SDD 工作流](docs/SDD.md) 建立 M1 的上下文预算规格，再补验证闭环：
+
+1. 长文件分页、Token 预算和上下文压缩
+2. `apply_patch` 等更小粒度的修改能力
+3. 修改后自动运行测试并进入修复循环
+4. 工具错误分类与可恢复性实验
+5. 容器化执行边界
+
+完整路线见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ## License
 
