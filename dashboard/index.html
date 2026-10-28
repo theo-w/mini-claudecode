@@ -51,13 +51,21 @@
       <section id="view-story" class="view-panel" role="tabpanel" aria-labelledby="tab-story">
         <div class="page-heading story-heading">
           <div>
-            <p class="eyebrow">REAL TRACE STORY</p>
-            <h1>一次 Agent 运行，先从故事讲起</h1>
-            <p>先看它做了什么，再看为什么形成这个路径。每个轮次、工具和 observation 都能回到真实事件。</p>
+            <p class="eyebrow">AGENT MECHANISM LAB</p>
+            <h1>把一次 Agent 运行，拆成一堂可验证的机制课</h1>
+            <p>先问“实验要验证什么”，再沿着真实 Observation 看下一步参数、停止分支与 checks。页面只解释可观察证据，不猜模型内部思维。</p>
           </div>
-          <label class="task-picker">选择一次任务<select id="story-task-select" aria-label="任务故事"></select></label>
+          <label class="task-picker">选择实验<select id="story-task-select" aria-label="实验任务"></select></label>
         </div>
         <div id="story-hero"></div>
+        <section id="story-brief" class="story-brief" aria-label="实验问题与任务契约"></section>
+        <section class="section-block causal-section">
+          <div class="section-heading">
+            <div><p class="eyebrow">OBSERVABLE CAUSAL CHAIN</p><h2>从任务目标到停止证据</h2></div>
+            <p>强字段边只在 Observation 字段与下一次调用参数相等时成立。连续分页默认折叠，展开仍是真实步骤。</p>
+          </div>
+          <div id="story-causal-chain"></div>
+        </section>
         <div class="story-grid">
           <section class="panel cycle-panel">
             <div class="panel-heading">
@@ -78,21 +86,28 @@
         </div>
         <section class="section-block story-round-section">
           <div class="section-heading">
-            <div><p class="eyebrow">ROUND BY ROUND</p><h2 id="story-round-title">按模型轮次读故事</h2></div>
-            <p>同一 <code>step</code> 的事件归为同一轮。点击轮次可回到对应真实 Trace。</p>
+            <div><p class="eyebrow">RAW TURNS</p><h2 id="story-round-title">真实轮次明细</h2></div>
+            <p>默认折叠是为了先看机制；展开后，每一轮仍可定位到对应真实 Trace。</p>
           </div>
           <div id="story-rounds" class="story-rounds"></div>
         </section>
         <div class="story-bottom-grid">
           <section class="panel">
-            <div class="panel-heading"><div><p class="eyebrow">TASK CHECKS</p><h2>完成判定</h2></div><span class="soft-chip">确定性 checks</span></div>
-            <div id="story-checks" class="check-list"></div>
+            <div class="panel-heading"><div><p class="eyebrow">CHECK SEMANTICS</p><h2>每个 check 到底防什么</h2></div><span class="soft-chip">PASS / FAIL / SKIP / UNKNOWN</span></div>
+            <div id="story-checks" class="check-groups"></div>
           </section>
           <section class="panel final-panel">
-            <div class="panel-heading"><div><p class="eyebrow">FINAL RESPONSE</p><h2>Agent 最后说了什么</h2></div></div>
+            <div class="panel-heading"><div><p class="eyebrow">FINAL RESPONSE</p><h2>Agent 最后交付了什么</h2></div></div>
             <div id="story-final"></div>
           </section>
         </div>
+        <section class="section-block takeaways-section">
+          <div class="section-heading">
+            <div><p class="eyebrow">TAKEAWAYS</p><h2>这次实验能带走的 5 个机制结论</h2></div>
+            <p>结论只覆盖当前任务与当前 Trace；单次 A/B 差异不是策略因果证明。</p>
+          </div>
+          <div id="story-takeaways" class="story-takeaways"></div>
+        </section>
       </section>
 
       <section id="view-replay" class="view-panel" role="tabpanel" aria-labelledby="tab-replay" hidden>

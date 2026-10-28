@@ -29,5 +29,6 @@ cp docs/templates/implement.md docs/specs/m1.1-context-budget/implement.md
 - [m1.2 History Compaction](m1.2-history-compaction/spec.md)（已验证，M1 第二阶段；机制通过，成功率收益未证明）
 - [m1.3 Agent Anatomy](m1.3-agent-anatomy/spec.md)（已验证，M1 第三阶段；真实数据只读拆解与 A/B 对比，不新增 Live Eval）
 - [m1.4 Agent Loop Story](m1.4-agent-loop-story/spec.md)（已验证，M1 第四阶段；任务故事、真实 Loop、乐高工具插槽与 A/B 首分叉，不新增 Live Eval）
+- [m1.5 Agent Causal Explainer](m1.5-agent-causal-explainer/spec.md)（已验证，M1 第五阶段；任务契约、fixture、字段因果、episode、check 教学与单次 A/B 边界，不新增 Live Eval）
 
 完整流程见 [../SDD.md](../SDD.md)，项目原则见 [../CONSTITUTION.md](../CONSTITUTION.md)。

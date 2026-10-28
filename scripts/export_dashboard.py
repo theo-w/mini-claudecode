@@ -71,6 +71,125 @@ def _clean(value: Any, max_content_chars: int) -> Any:
     return value
 
 
+def _line_count(value: Any) -> int | None:
+    if not isinstance(value, str):
+        return None
+    return len(value.splitlines())
+
+
+def _list_count(value: Any) -> int:
+    return len(value) if isinstance(value, list) else 0
+
+
+def summarize_fixture(value: Any) -> dict[str, Any]:
+    """Describe a fixture without exporting its body."""
+
+    if isinstance(value, str):
+        return {
+            "kind": "text",
+            "line_count": _line_count(value),
+        }
+
+    if not isinstance(value, dict):
+        return {
+            "kind": "unknown",
+            "line_count": None,
+        }
+
+    if "repeat_lines" in value:
+        repeat = value.get("repeat")
+        if not isinstance(repeat, int) or isinstance(repeat, bool) or repeat < 0:
+            raise ValueError("fixture repeat 必须是非负整数")
+        head_lines = _list_count(value.get("head_lines"))
+        repeat_lines = _list_count(value.get("repeat_lines"))
+        tail_lines = _list_count(value.get("tail_lines"))
+        return {
+            "kind": "repeated",
+            "line_count": head_lines + repeat_lines * repeat + tail_lines,
+            "head_lines": head_lines,
+            "repeat_lines": repeat_lines,
+            "repeat": repeat,
+            "tail_lines": tail_lines,
+        }
+
+    return {
+        "kind": "structured",
+        "line_count": None,
+    }
+
+
+def _task_contract(raw: dict[str, Any], *, max_content_chars: int) -> dict[str, Any]:
+    task_id = raw.get("id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("任务缺少非空 id")
+    setup = raw.get("setup") or {}
+    if not isinstance(setup, dict):
+        raise ValueError(f"任务 {task_id} 的 setup 必须是 object")
+    checks = raw.get("checks") or []
+    if not isinstance(checks, list):
+        raise ValueError(f"任务 {task_id} 的 checks 必须是 array")
+    fixtures = []
+    for path in sorted(setup):
+        if not isinstance(path, str):
+            raise ValueError(f"任务 {task_id} 的 fixture path 必须是字符串")
+        fixtures.append(
+            {
+                "path": path,
+                **summarize_fixture(setup[path]),
+            }
+        )
+    return {
+        "id": task_id,
+        "group": raw.get("group"),
+        "tags": _clean(raw.get("tags") or [], max_content_chars),
+        "prompt": _clean(raw.get("prompt") or "", max_content_chars),
+        "checks": _clean(checks, max_content_chars),
+        "max_steps": raw.get("max_steps"),
+        "fixtures": fixtures,
+    }
+
+
+def merge_task_contracts(contracts: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Merge contracts by ID; identical duplicates are harmless."""
+
+    merged: dict[str, dict[str, Any]] = {}
+    canonical: dict[str, str] = {}
+    for contract in contracts:
+        if not isinstance(contract, dict):
+            raise ValueError("task contract 必须是 object")
+        task_id = contract.get("id")
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("task contract 缺少非空 id")
+        encoded = json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if task_id in merged and canonical[task_id] != encoded:
+            raise ValueError(f"task contract 冲突：{task_id}")
+        merged[task_id] = copy.deepcopy(contract)
+        canonical[task_id] = encoded
+    return merged
+
+
+def load_task_contracts(
+    paths: Iterable[str | Path],
+    *,
+    max_content_chars: int = 6000,
+) -> dict[str, dict[str, Any]]:
+    """Load task files explicitly; never infer them from report paths."""
+
+    contracts: list[dict[str, Any]] = []
+    for path in paths:
+        task_path = Path(path)
+        payload = json.loads(task_path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            payload = payload.get("tasks")
+        if not isinstance(payload, list):
+            raise ValueError(f"任务文件必须包含数组：{task_path.name}")
+        for raw in payload:
+            if not isinstance(raw, dict):
+                raise ValueError(f"任务文件必须包含 object：{task_path.name}")
+            contracts.append(_task_contract(raw, max_content_chars=max_content_chars))
+    return merge_task_contracts(contracts)
+
+
 def _arguments_equal(left: Any, right: Any) -> bool:
     if left == right:
         return True
@@ -246,31 +365,45 @@ def build_dashboard_data(
     registry,
     *,
     generated_at: str | None = None,
+    task_contracts: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     run_list = list(runs)
     labels = [run.get("label") for run in run_list]
     if len(labels) != len(set(labels)):
         raise ValueError("Dashboard run label 必须唯一")
-    return {
+    data = {
         "schema_version": 1,
         "generated_at": generated_at or datetime.now(timezone.utc).isoformat(),
         "data_classification": "local-unredacted",
         "catalog": build_catalog(registry),
         "runs": run_list,
     }
+    if task_contracts is not None:
+        data["task_contracts"] = task_contracts
+    return data
 
 
 def export_dashboard(
     report_entries: list[tuple[Path, str]],
     output: Path,
     *,
+    task_paths: Iterable[str | Path] | None = None,
     max_content_chars: int = 6000,
 ) -> dict[str, Any]:
     runs = [
         load_report(path, label, max_content_chars=max_content_chars)
         for path, label in report_entries
     ]
-    data = build_dashboard_data(runs, build_registry(ROOT))
+    task_contracts = (
+        load_task_contracts(task_paths, max_content_chars=max_content_chars)
+        if task_paths is not None
+        else None
+    )
+    data = build_dashboard_data(
+        runs,
+        build_registry(ROOT),
+        task_contracts=task_contracts,
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
@@ -285,6 +418,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("reports", nargs="+", type=Path, help="一份或多份 Eval JSON")
     parser.add_argument("--labels", nargs="+", help="与 reports 一一对应的显示名称")
+    parser.add_argument(
+        "--tasks",
+        action="append",
+        type=Path,
+        default=[],
+        metavar="PATH",
+        help="任务集 JSON；可重复传入，按 task id 合并",
+    )
     parser.add_argument("--output", type=Path, default=ROOT / "dashboard" / "data.json")
     parser.add_argument("--max-content-chars", type=int, default=6000)
     args = parser.parse_args(argv)
@@ -303,15 +444,17 @@ def main(argv: list[str] | None = None) -> int:
         data = export_dashboard(
             entries,
             args.output,
+            task_paths=args.tasks or None,
             max_content_chars=args.max_content_chars,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         parser.exit(2, f"导出失败：{exc}\n")
 
     task_count = sum(len(run["records"]) for run in data["runs"])
+    contract_count = len(data.get("task_contracts") or {})
     print(
         f"已导出 {len(data['runs'])} 次运行、{task_count} 条任务记录、"
-        f"{len(data['catalog']['tools'])} 个工具到 {args.output}"
+        f"{len(data['catalog']['tools'])} 个工具、{contract_count} 份任务契约到 {args.output}"
     )
     print("数据分类：local-unredacted。字符截断不是脱敏，请勿直接公开分享。")
     return 0

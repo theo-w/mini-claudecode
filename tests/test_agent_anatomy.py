@@ -12,6 +12,9 @@ from scripts.export_dashboard import (
     build_dashboard_data,
     link_tool_events,
     load_report,
+    load_task_contracts,
+    merge_task_contracts,
+    summarize_fixture,
 )
 from tools.builtin import build_registry
 
@@ -154,6 +157,69 @@ class AgentAnatomyTests(unittest.TestCase):
         self.assertIn("truncated", run["records"][0]["final_text"])
         self.assertLess(len(run["records"][0]["final_text"]), 40)
 
+    def test_summarize_fixture_calculates_repeated_line_count(self) -> None:
+        summary = summarize_fixture(
+            {
+                "repeat_lines": ["a", "b", "c", "d"],
+                "repeat": 24,
+                "tail_lines": ["ACCESS_CODE: secret", "done", "tail"],
+            }
+        )
+
+        self.assertEqual(summary["kind"], "repeated")
+        self.assertEqual(summary["line_count"], 99)
+        self.assertEqual(summary["repeat_lines"], 4)
+        self.assertEqual(summary["repeat"], 24)
+        self.assertEqual(summary["tail_lines"], 3)
+        self.assertNotIn("ACCESS_CODE", json.dumps(summary, ensure_ascii=False))
+
+    def test_load_task_contracts_summarizes_fixtures_without_content(self) -> None:
+        task_path = self.root / "tasks.json"
+        task_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "task-1",
+                        "group": "retention",
+                        "tags": ["exact_value", "pagination"],
+                        "prompt": "read the fixture",
+                        "setup": {
+                            "audit.log": {
+                                "repeat_lines": ["a", "b", "c", "d"],
+                                "repeat": 24,
+                                "tail_lines": ["ACCESS_CODE: must-not-export", "done", "tail"],
+                            },
+                            "notes.txt": "private fixture body\nsecond line",
+                        },
+                        "checks": [{"type": "tool_succeeded", "name": "read_file"}],
+                        "max_steps": 10,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        contracts = load_task_contracts([task_path])
+        contract = contracts["task-1"]
+        encoded = json.dumps(contracts, ensure_ascii=False)
+
+        self.assertEqual(contract["prompt"], "read the fixture")
+        self.assertEqual(contract["fixtures"][0]["line_count"], 99)
+        self.assertEqual(contract["fixtures"][1]["line_count"], 2)
+        self.assertNotIn("private fixture body", encoded)
+        self.assertNotIn("must-not-export", encoded)
+        self.assertNotIn("setup", encoded)
+
+    def test_merge_task_contracts_accepts_equal_and_rejects_conflicting_duplicates(self) -> None:
+        first = {"id": "task-1", "prompt": "same", "checks": [], "fixtures": []}
+        duplicate = {"id": "task-1", "prompt": "same", "checks": [], "fixtures": []}
+        conflict = {"id": "task-1", "prompt": "different", "checks": [], "fixtures": []}
+
+        merged = merge_task_contracts([first, duplicate])
+        self.assertEqual(merged["task-1"]["prompt"], "same")
+        with self.assertRaisesRegex(ValueError, "冲突"):
+            merge_task_contracts([first, conflict])
+
     def test_dashboard_data_contains_runs_without_fabricating_revision(self) -> None:
         report_path = self.root / "run.json"
         report_path.write_text(
@@ -209,6 +275,52 @@ class AgentAnatomyTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertTrue(output_path.exists())
         self.assertIn("local-unredacted", completed.stdout)
+
+    def test_cli_accepts_repeated_task_files(self) -> None:
+        report_path = self.root / "run.json"
+        task_path = self.root / "tasks.json"
+        output_path = self.root / "dashboard" / "data.json"
+        report_path.write_text(
+            json.dumps({"provider": "local", "model": "test", "records": []}),
+            encoding="utf-8",
+        )
+        task_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "task-1",
+                        "group": "test",
+                        "prompt": "do the task",
+                        "setup": {"notes.txt": "one\ntwo"},
+                        "checks": [],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "scripts/export_dashboard.py",
+                str(report_path),
+                "--labels",
+                "cli",
+                "--tasks",
+                str(task_path),
+                "--output",
+                str(output_path),
+            ],
+            cwd=Path(__file__).resolve().parent.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        data = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["task_contracts"]["task-1"]["fixtures"][0]["line_count"], 2)
+        self.assertNotIn("one\ntwo", output_path.read_text(encoding="utf-8"))
 
     def test_report_without_records_is_rejected(self) -> None:
         report_path = self.root / "broken.json"

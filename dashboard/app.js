@@ -136,11 +136,33 @@ function sourceLink(source) {
   return link;
 }
 
-function statusBadge(passed, status) {
-  const isPass = passed === true;
-  const isFail = passed === false;
-  const text = isPass ? "PASS" : (isFail ? "FAIL" : (status || "未记录"));
-  return h("span", `status-badge ${isPass ? "status-pass" : (isFail ? "status-fail" : "status-neutral")}`, text);
+const STATUS_STYLE = {
+  PASS: { symbol: "✓", className: "status-pass" },
+  FAIL: { symbol: "×", className: "status-fail" },
+  SKIP: { symbol: "→", className: "status-skip" },
+  UNKNOWN: { symbol: "?", className: "status-unknown" },
+};
+
+function normalizedStatus(passed, status) {
+  if (passed === true) return "PASS";
+  if (passed === false) return "FAIL";
+  const value = String(status || "").toUpperCase();
+  if (["SKIP", "SKIPPED"].includes(value)) return "SKIP";
+  return "UNKNOWN";
+}
+
+function statusBadge(passed, status, prefix = "") {
+  const key = normalizedStatus(passed, status);
+  const style = STATUS_STYLE[key];
+  return h("span", `status-badge ${style.className}`, `${prefix}${style.symbol} ${key}`);
+}
+
+function checkBadge(check, prefix = "") {
+  const status = ["PASS", "FAIL", "SKIP", "UNKNOWN"].includes(check?.status)
+    ? check.status
+    : normalizedStatus(check?.passed, check?.status);
+  const style = STATUS_STYLE[status];
+  return h("span", `status-badge ${style.className}`, `${prefix}${style.symbol} ${status}`);
 }
 
 function fillRunSelect(select, selected) {
@@ -158,7 +180,8 @@ function fillTaskSelect(select, run, selected) {
   if (!select) return;
   clear(select);
   (run?.records || []).forEach((record) => {
-    const option = h("option", "", `${record.passed === true ? "✓ PASS" : (record.passed === false ? "× FAIL" : "•")} · ${record.id}`);
+    const status = normalizedStatus(record.passed, record.status);
+    const option = h("option", "", `${STATUS_STYLE[status].symbol} ${status} · ${record.id}`);
     option.value = record.id;
     option.selected = record.id === selected;
     select.append(option);
@@ -290,59 +313,62 @@ function toolUsage(run) {
   return usage;
 }
 
-function renderStoryHero(record, grouped, path) {
+function renderStoryHero(record, grouped, path, summary) {
   const root = clear($("story-hero"));
-  const counts = recordToolCounts(record);
-  const outcome = record.passed === true ? "pass" : (record.passed === false ? "fail" : "neutral");
-  const card = h("article", `story-hero-card hero-${outcome}`);
+  const outcome = summary.outcome.toLowerCase();
+  const card = h("article", `lesson-hero-card lesson-hero-${outcome}`);
 
-  const result = h("div", "hero-result");
-  result.append(h("p", "eyebrow", "这次任务结果"));
-  const resultTop = h("div", "hero-result-top");
-  add(resultTop, statusBadge(record.passed, record.status), h("code", "hero-task-id", record.id));
-  result.append(resultTop);
-  result.append(h("p", "hero-result-copy", record.passed === true
-    ? "任务 checks 全部通过。下面是形成这个结果的真实事件路径。"
-    : "任务没有通过全部 checks。先沿真实路径定位首个可复核差异，而不是猜模型动机。"));
+  const conclusion = h("div", "lesson-hero-conclusion");
+  conclusion.append(h("p", "eyebrow", "本次实验结论"));
+  const top = h("div", "lesson-hero-top");
+  add(top, statusBadge(record.passed, record.status), h("code", "hero-task-id", record.id));
+  conclusion.append(top);
+  conclusion.append(h("h2", "", summary.outcome === "PASS"
+    ? "路径完成了任务，但仍要分清 PASS 与 SKIP"
+    : "先沿可观察路径定位差异，不猜模型动机"));
+  conclusion.append(h("p", "lesson-hero-copy", `checks 汇总：PASS ${summary.counts.PASS} / FAIL ${summary.counts.FAIL} / SKIP ${summary.counts.SKIP} / UNKNOWN ${summary.counts.UNKNOWN}。通过结果不等于每一项机制都被验证。`));
   const meta = h("div", "hero-meta");
   add(meta,
     h("span", "", `group · ${record.group || "未记录"}`),
     h("span", "", `${record.steps ?? "?"} 个模型步`),
     h("span", "", formatDuration(record.duration_seconds)),
-    h("span", "", `${path.totalCalls} 次工具调用`),
     h("span", "", `${(record.events || []).length} 条事件`));
-  result.append(meta);
+  conclusion.append(meta);
 
-  const route = h("div", "hero-route");
-  route.append(h("p", "eyebrow", "实际工具路径"));
-  const pathRow = h("div", "hero-path");
-  pathRow.append(h("span", "path-cap", "任务"));
-  pathRow.append(h("span", "path-arrow", "→"));
-  if (path.usedTools.length) {
-    path.usedTools.forEach((name) => {
-      const chip = h("span", "path-tool", `${name} ×${counts[name] || 0}`);
-      pathRow.append(chip, h("span", "path-arrow", "→"));
-    });
-  } else {
-    pathRow.append(h("span", "path-no-tool", "没有 tool_call"), h("span", "path-arrow", "→"));
-  }
-  const hasFinish = grouped.rounds.some((round) => round.branch.type === "finish");
-  pathRow.append(h("span", `path-cap ${hasFinish ? "path-finish" : "path-unfinished"}`, hasFinish ? "完成" : "未记录完成分支"));
-  route.append(pathRow);
-  route.append(h("p", "hero-route-note", path.usedTools.length
-    ? `工具名和次数由 ${path.totalCalls} 个真实 tool_call 派生；observation 写回后进入下一轮。`
-    : "Trace 中没有 tool_call，模型判断后直接进入完成分支。"));
+  const stats = h("div", "lesson-hero-stats");
+  [
+    [summary.fixture.totalLineCount !== null ? `${summary.fixture.totalLineCount}` : "—", "fixture 行数"],
+    [path.totalCalls, "真实工具调用"],
+    [summary.chain.strongEdges.length, "强字段接力"],
+    [summary.continuation?.stages.length || 0, "折叠的真实 step"],
+  ].forEach(([value, label]) => {
+    const item = h("div", "lesson-stat");
+    add(item, h("strong", "", value), h("span", "", label));
+    stats.append(item);
+  });
+  conclusion.append(stats);
+  const replay = h("button", "text-button hero-trace-button", "从第一条真实事件开始回放 →");
+  replay.type = "button";
+  replay.addEventListener("click", () => jumpToRecord(state.runId, record.id, 0));
+  conclusion.append(replay);
 
-  const finalText = record.final_text || grouped.finalResponse?.content || "";
-  const final = h("div", "hero-final");
-  final.append(h("p", "eyebrow", "最后响应"));
-  final.append(h("p", "hero-final-copy", compactText(finalText, 230)));
-  const replayButton = h("button", "text-button hero-trace-button", "从第一条事件回放 →");
-  replayButton.type = "button";
-  replayButton.addEventListener("click", () => jumpToRecord(state.runId, record.id, 0));
-  final.append(replayButton);
+  const guide = h("aside", "lesson-hero-guide");
+  guide.append(h("p", "eyebrow", "读完后应该能回答"));
+  const list = h("ol", "lesson-question-list");
+  [
+    "实验到底在验证哪个 Agent 机制？",
+    "哪一条 Observation 字段进入了下一次调用？",
+    "连续分页为什么要折叠，折叠后证据有没有丢？",
+    "每个 check 在防哪种“伪成功”？",
+  ].forEach((text) => list.append(h("li", "", text)));
+  guide.append(list);
+  const boundary = h("div", "lesson-boundary");
+  add(boundary,
+    h("strong", "", "证据边界"),
+    h("p", "", summary.boundary));
+  guide.append(boundary);
 
-  add(card, result, route, final);
+  add(card, conclusion, guide);
   root.append(card);
 }
 
@@ -472,26 +498,296 @@ function renderStoryParts(record) {
   });
 }
 
+function fixtureVisual(fixture) {
+  const visual = h("div", "fixture-visual");
+  const first = fixture.fixtures?.[0] || null;
+  if (!fixture.hasContract) {
+    visual.append(h("span", "fixture-unknown", "未导入 fixture 摘要"));
+    return visual;
+  }
+  if (!first) {
+    visual.append(h("span", "fixture-unknown", "任务契约没有 fixture"));
+    return visual;
+  }
+  if (first.kind === "repeated" && first.repeat && first.repeatLines) {
+    const blocks = h("div", "fixture-repeat-blocks");
+    const repeatCount = Math.min(first.repeat, 24);
+    for (let index = 0; index < repeatCount; index += 1) {
+      const block = h("span", "fixture-block");
+      block.title = `重复块 ${index + 1} · ${first.repeatLines} 行`;
+      blocks.append(block);
+    }
+    if (first.tailLines) blocks.append(h("span", "fixture-tail", `+${first.tailLines}`));
+    add(visual, blocks, h("small", "", `${first.repeat} × ${first.repeatLines} 行重复块${first.tailLines ? ` + ${first.tailLines} 行尾部` : ""}`));
+  } else {
+    const bar = h("div", "fixture-plain-bar");
+    bar.style.width = `${Math.max(12, Math.min(100, (first.lineCount || 1) / 4))}%`;
+    add(visual, bar, h("small", "", first.composition));
+  }
+  return visual;
+}
+
+function appendBriefCheckList(parent, title, checks, emptyText) {
+  const block = h("div", "brief-check-block");
+  block.append(h("h4", "", title));
+  const list = h("div", "brief-check-list");
+  if (!checks?.length) {
+    list.append(h("p", "brief-check-empty", emptyText));
+  } else {
+    checks.forEach((check) => {
+      const item = h("div", "brief-check-item");
+      add(item, checkBadge(check), h("span", "", check.label));
+      list.append(item);
+    });
+  }
+  block.append(list);
+  parent.append(block);
+}
+
+function renderStoryBrief(summary, record) {
+  const root = clear($("story-brief"));
+  const grid = h("div", "story-brief-grid");
+
+  const questionCard = h("article", "brief-card brief-question");
+  questionCard.append(h("span", "brief-index", "01"));
+  questionCard.append(h("p", "eyebrow", "实验问题"));
+  questionCard.append(h("h2", "", "先把任务变成可观察的 Agent 实验"));
+  if (summary.hasContract) {
+    questionCard.append(h("blockquote", "task-prompt", summary.question));
+    questionCard.append(h("p", "brief-note", "Prompt 来自任务契约，不从最终答案反推。页面把文字要求映射到 fixture、过程约束和结果验收。"));
+  } else {
+    const missing = h("div", "contract-missing");
+    add(missing,
+      h("strong", "", "未导入任务契约"),
+      h("p", "", "不能补造 Prompt、fixture 规模或任务设计。当前页面只展示 Trace 与已有 checks。"));
+    questionCard.append(missing);
+  }
+  const actual = h("div", "brief-actual");
+  add(actual,
+    h("span", "", `实际工具 · ${summary.toolNames.join(" + ") || "无 tool_call"}`),
+    h("span", "", `真实轮次 · ${summary.chain.turns.length} 次带工具调用的 step`));
+  questionCard.append(actual);
+
+  const fixtureCard = h("article", "brief-card brief-fixture");
+  fixtureCard.append(h("span", "brief-index", "02"));
+  fixtureCard.append(h("p", "eyebrow", "Fixture 为什么这样设计"));
+  const fixtureMetric = h("div", "fixture-metric");
+  add(fixtureMetric,
+    h("strong", "", summary.fixture.totalLineCount !== null ? summary.fixture.totalLineCount : "—"),
+    h("span", "", "行"));
+  fixtureCard.append(fixtureMetric);
+  fixtureCard.append(h("p", "fixture-composition", summary.fixture.composition));
+  fixtureCard.append(fixtureVisual(summary.fixture));
+  fixtureCard.append(h("p", "brief-note", summary.hasContract
+    ? "长度超过一次方便读取的范围，任务才真正逼出“读取 → Observation → 下一次 start_line”的分页路径。"
+    : "没有任务契约时，不能声称 fixture 为什么被设计成这个长度。"));
+
+  const checkCard = h("article", "brief-card brief-contract");
+  checkCard.append(h("span", "brief-index", "03"));
+  checkCard.append(h("p", "eyebrow", "成功标准与过程约束"));
+  checkCard.append(h("h2", "", "答案正确，只是其中一条"));
+  appendBriefCheckList(checkCard, "最终验收", summary.acceptance, "任务契约没有结果验收 check。");
+  appendBriefCheckList(checkCard, "过程约束", summary.constraints, "任务契约没有过程约束 check。");
+  const capability = summary.groups.find((group) => group.id === "capability")?.checks || [];
+  appendBriefCheckList(checkCard, "能力证据", capability, "没有记录工具能力 check。");
+  const integrity = summary.groups.find((group) => group.id === "integrity")?.checks || [];
+  if (integrity.length) appendBriefCheckList(checkCard, "完整性 / 未验证项", integrity, "没有记录完整性 check。");
+
+  add(grid, questionCard, fixtureCard, checkCard);
+  root.append(grid);
+}
+
+function eventIndexForStage(record, stage) {
+  const events = record?.events || [];
+  const sequence = stage?.call?.sequence ?? stage?.response?.sequence ?? stage?.sequence;
+  const index = events.findIndex((event) => sequence !== null && sequence !== undefined && Number(event.sequence) === Number(sequence));
+  return index >= 0 ? index : 0;
+}
+
+function stageJumpButton(record, stage, label = "定位真实事件") {
+  const button = h("button", "mini-button", `${label} →`);
+  button.type = "button";
+  button.addEventListener("click", () => jumpToRecord(state.runId, record.id, eventIndexForStage(record, stage)));
+  return button;
+}
+
+function causalField(label, value, tone = "") {
+  return h("span", `causal-field ${tone}`, `${label}=${value === null || value === undefined ? "未记录" : value}`);
+}
+
+function renderCausalStep(record, stage) {
+  const row = h("article", "causal-step");
+  const head = h("div", "causal-step-head");
+  add(head,
+    h("span", "causal-step-number", `S${stage.step}`),
+    h("strong", "", `${stage.tool || "工具"} · ${stage.filePath || "路径未记录"}`),
+    stageJumpButton(record, stage, "回放这一步"));
+  row.append(head);
+  const fields = h("div", "causal-fields");
+  add(fields,
+    causalField("start_line", stage.startLine),
+    causalField("returned_range", stage.returnedRange),
+    causalField("has_more", stage.hasMore),
+    causalField("next_start_line", stage.nextStartLine, stage.hasMore === true ? "field-hot" : ""));
+  row.append(fields);
+  const narrative = h("div", "causal-step-copy");
+  add(narrative,
+    h("span", "", `调用：${Story.argumentSummary(stage.call)}`),
+    h("span", "", `Observation：${stage.detail}`));
+  row.append(narrative);
+  return row;
+}
+
+function renderCausalEdge(edge) {
+  const card = h("div", `causal-edge ${edge.strong ? "strong-edge" : "weak-edge"}`);
+  const values = h("div", "causal-edge-values");
+  if (edge.strong) {
+    add(values,
+      h("code", "", `Observation.next_start_line=${edge.observationValue}`),
+      h("span", "causal-arrow", "→"),
+      h("code", "", `下一次 tool_call.start_line=${edge.callValue}`));
+  } else {
+    add(values, h("strong", "", "未形成强字段边"), h("span", "", edge.reason || "可比较字段未匹配。"));
+  }
+  card.append(values);
+  card.append(h("p", "", edge.strong ? "字段相等 · 内部动机未记录" : edge.reason));
+  return card;
+}
+
+function continuationEpisode(record, episode, chain) {
+  const details = h("details", "causal-episode continuation-episode");
+  const summary = h("summary", "causal-episode-summary");
+  const label = h("span", "episode-range", `S${episode.firstStep}–S${episode.lastStep}`);
+  const copy = h("div", "episode-summary-copy");
+  add(copy,
+    h("h3", "", `一个分页目标，${episode.stages.length} 次连续接力`),
+    h("p", "", episode.detail));
+  const firstEdge = chain.links.find((edge) => edge.strong && edge.from === episode.stages[0]?.id);
+  if (firstEdge) {
+    const preview = h("div", "causal-preview");
+    add(preview,
+      h("code", "", `next_start_line=${firstEdge.observationValue}`),
+      h("span", "", "→"),
+      h("code", "", `start_line=${firstEdge.callValue}`),
+      h("strong", "", "字段相等"));
+    copy.append(preview);
+  }
+  summary.append(label, copy, h("span", "episode-expand", "展开真实步骤 +"));
+  details.append(summary);
+
+  const body = h("div", "causal-episode-body");
+  body.append(h("p", "causal-body-note", "聚合只减少叙事噪音，不删除证据。每个 step 都能跳回 Replay，强边只在字段相等时高亮。"));
+  const steps = h("div", "causal-steps");
+  episode.stages.forEach((stage) => {
+    steps.append(renderCausalStep(record, stage));
+    const next = episode.stages.find((candidate) => candidate.step === stage.step + 1);
+    if (!next) return;
+    const edge = chain.links.find((link) => link.from === stage.id && link.to === next.id);
+    if (edge) steps.append(renderCausalEdge(edge));
+  });
+  body.append(steps);
+  details.append(body);
+  return details;
+}
+
+function singleCausalEpisode(record, episode, chain) {
+  const stage = episode.stages[0];
+  if (!stage) return h("div", "no-data", "这个 episode 没有记录。");
+  if (episode.kind === "stop") {
+    const card = h("article", "causal-stop");
+    const top = h("div", "causal-stop-head");
+    add(top, h("span", "episode-range", stage.step ? `S${stage.step}` : "RUN"), h("h3", "", "停止 · model_response 不含 tool_calls"));
+    card.append(top);
+    card.append(h("p", "", stage.response
+      ? `结构证据：最后一条 model_response 的 tool_calls 为空。最终文本：${compactText(stage.content || "空文本", 220)}`
+      : "报告没有记录无 tool_calls 的最终响应，不能声称 Loop 正常停止。"));
+    if (stage.response) card.append(stageJumpButton(record, stage, "定位停止事件"));
+    return card;
+  }
+  if (episode.kind === "result") {
+    const result = chain.result;
+    const card = h("article", "causal-result");
+    card.append(h("h3", "", "验收 · 每个结论都能回到 check"));
+    const badges = h("div", "causal-result-badges");
+    Object.entries(result.statusCounts || {}).forEach(([status, count]) => {
+      const style = STATUS_STYLE[status];
+      badges.append(h("span", `status-badge ${style.className}`, `${style.symbol} ${status} ${count}`));
+    });
+    card.append(badges);
+    card.append(h("p", "", "结果验收与过程约束分开计分；SKIP 表示本次没有验证，不会自动变成 PASS。详细语义见下方 check 卡。"));
+    return card;
+  }
+  const details = h("details", "causal-episode single-episode");
+  const summary = h("summary", "causal-episode-summary");
+  const copy = h("div", "episode-summary-copy");
+  add(copy, h("h3", "", episode.title), h("p", "", episode.detail));
+  summary.append(h("span", "episode-range", `S${stage.step}`), copy, h("span", "episode-expand", "展开证据 +"));
+  details.append(summary);
+  const body = h("div", "causal-episode-body");
+  body.append(renderCausalStep(record, stage));
+  details.append(body);
+  return details;
+}
+
+function renderCausalChain(record, summary) {
+  const root = clear($("story-causal-chain"));
+  const rule = h("div", "causal-rule");
+  add(rule,
+    h("strong", "", "怎么读这条链"),
+    h("p", "", "Observation 给出字段 → 下一次 tool_call 使用相同值 → 工具返回新的 Observation → 直到停止分支。"),
+    h("span", "causal-rule-boundary", "内部动机未记录"));
+  root.append(rule);
+
+  const episodes = summary.episodes.filter((episode) => episode.kind !== "question");
+  if (!episodes.length) {
+    root.append(h("div", "no-data", "没有可重组的真实 episode。"));
+    return;
+  }
+  episodes.forEach((episode) => {
+    if (episode.kind === "continuation") root.append(continuationEpisode(record, episode, summary.chain));
+    else root.append(singleCausalEpisode(record, episode, summary.chain));
+  });
+}
+
+function renderStoryTakeaways(summary) {
+  const root = clear($("story-takeaways"));
+  const grid = h("div", "takeaway-grid");
+  summary.takeaways.forEach((takeaway, index) => {
+    const card = h("article", "takeaway-card");
+    add(card,
+      h("span", "takeaway-number", String(index + 1).padStart(2, "0")),
+      h("h3", "", takeaway.title),
+      h("p", "", takeaway.body));
+    grid.append(card);
+  });
+  root.append(grid);
+  root.append(h("p", "takeaways-boundary", "可观察 ≠ 因果归因：字段相等证明消息中出现同一值；它不证明模型“因为”这个值而行动。单次 A/B 只能定位路径差异，不能证明策略因果。"));
+}
+
 function renderStoryRounds(record) {
   const root = clear($("story-rounds"));
   const grouped = Story.groupRounds(record);
-  $("story-round-title").textContent = `按模型轮次读故事 · ${grouped.rounds.length} 轮`;
+  $("story-round-title").textContent = `真实轮次明细 · ${grouped.rounds.length} 轮`;
   if (!grouped.rounds.length) {
     root.append(h("div", "no-data", "报告没有带 step 的模型轮次；请在 Loop 回放中查看 run-level 事件。"));
     return;
   }
 
   grouped.rounds.forEach((round) => {
-    const card = h("article", `round-card round-${round.branch.type}`);
-    const head = h("button", "round-jump");
-    head.type = "button";
-    head.setAttribute("aria-label", `回放第 ${round.step} 轮真实事件`);
+    const card = h("details", `round-card round-${round.branch.type}`);
+    const head = h("summary", "round-jump");
     const number = h("span", "round-number", `S${round.step}`);
     const title = h("span", "round-title");
     add(title, h("strong", "", round.narrative.headline), h("small", "", `${round.events.length} 条事件 · ${BRANCH_LABELS[round.branch.type] || round.branch.type}`));
-    add(head, number, title, h("span", "round-jump-label", "定位 Trace →"));
-    head.addEventListener("click", () => jumpToRecord(state.runId, record.id, eventIndexForStep(record, round.step)));
+    add(head, number, title, h("span", "round-jump-label", "展开明细 +"));
     card.append(head);
+
+    const body = h("div", "round-body");
+    const bodyActions = h("div", "round-body-actions");
+    const headJump = h("button", "mini-button", "定位本轮 →");
+    headJump.type = "button";
+    headJump.addEventListener("click", () => jumpToRecord(state.runId, record.id, eventIndexForStep(record, round.step)));
+    bodyActions.append(headJump);
 
     const request = round.requests[0] || null;
     const compaction = round.compactions[round.compactions.length - 1] || null;
@@ -500,8 +796,7 @@ function renderStoryRounds(record) {
       h("span", "", request ? `上下文 ${formatNumber(request.context_chars)} 字符 / ${request.message_count ?? "?"} 条消息` : "上下文未记录"),
       h("span", "", compaction ? (compaction.compacted ? "压缩已生效" : `压缩未触发 · ${compaction.reason || "原因未记录"}`) : "本轮无压缩检查"),
       h("span", "", `分支 · ${BRANCH_LABELS[round.branch.type] || round.branch.type}`));
-    card.append(facts);
-    card.append(h("p", "round-narrative", round.narrative.detail));
+    add(body, bodyActions, facts, h("p", "round-narrative", round.narrative.detail));
 
     if (round.calls.length) {
       const calls = h("div", "round-calls");
@@ -523,17 +818,45 @@ function renderStoryRounds(record) {
         add(row, copy, actions);
         calls.append(row);
       });
-      card.append(calls);
+      body.append(calls);
     } else if (round.branch.type === "finish") {
       const response = round.responses[round.responses.length - 1];
       const finish = h("div", "round-finish");
       add(finish, h("span", "finish-mark", "STOP"), h("p", "", compactText(response?.content || "模型没有请求工具，但最终文本为空。", 220)));
-      card.append(finish);
+      body.append(finish);
     } else if (round.errors.length) {
-      card.append(h("div", "round-error", Story.observationSummary(round.errors[0])));
+      body.append(h("div", "round-error", Story.observationSummary(round.errors[0])));
     }
+    card.append(body);
     root.append(card);
   });
+}
+
+function renderCheckCard(check) {
+  const classified = check?.status ? check : Story.classifyCheck(check);
+  const status = ["PASS", "FAIL", "SKIP", "UNKNOWN"].includes(classified.status) ? classified.status : "UNKNOWN";
+  const card = h("article", `check-card check-${status.toLowerCase()}`);
+  const top = h("div", "check-card-top");
+  add(top, checkBadge(classified), h("code", "check-raw-short", classified.check));
+  card.append(top);
+  card.append(h("h3", "", classified.label));
+  const grid = h("div", "check-learning-grid");
+  [
+    ["检查什么", classified.purpose],
+    ["防止哪种伪成功", classified.prevents],
+    ["失败说明什么", classified.failure],
+    ["对应 Agent 机制", classified.mechanism],
+  ].forEach(([label, copy]) => {
+    const block = h("div", "check-learning-item");
+    add(block, h("span", "", label), h("p", "", copy));
+    grid.append(block);
+  });
+  card.append(grid);
+  if (classified.skipReason) card.append(h("p", "check-skip-reason", classified.skipReason));
+  const raw = h("details", "check-raw");
+  raw.append(h("summary", "", "查看原始 check 字段"), h("code", "", classified.check));
+  card.append(raw);
+  return card;
 }
 
 function renderChecks(element, checks) {
@@ -542,10 +865,34 @@ function renderChecks(element, checks) {
     root.append(h("div", "no-data", "没有 checks 记录。"));
     return;
   }
-  checks.forEach((check) => {
-    const item = h("div", `check-item ${check.passed ? "" : "failed"}`);
-    add(item, h("span", "check-icon", check.passed ? "✓" : "×"), h("code", "", check.check));
-    root.append(item);
+  const list = h("div", "check-card-list");
+  checks.forEach((check) => list.append(renderCheckCard(check)));
+  root.append(list);
+}
+
+function renderCheckGroups(element, groups) {
+  const root = clear(element);
+  if (!groups?.length) {
+    root.append(h("div", "no-data", "没有 checks 记录。"));
+    return;
+  }
+  groups.forEach((group) => {
+    const section = h("section", "check-group");
+    const head = h("div", "check-group-head");
+    const heading = h("div");
+    add(heading, h("h3", "", group.title), h("p", "", group.subtitle));
+    const counts = h("div", "check-group-counts");
+    ["PASS", "FAIL", "SKIP", "UNKNOWN"].forEach((status) => {
+      const style = STATUS_STYLE[status];
+      counts.append(h("span", `check-count ${style.className}`, `${style.symbol} ${status} ${group.summary[status]}`));
+    });
+    add(head, heading, counts);
+    section.append(head, h("p", "check-group-description", group.description));
+    const list = h("div", "check-card-list");
+    if (group.checks.length) group.checks.forEach((check) => list.append(renderCheckCard(check)));
+    else list.append(h("p", "brief-check-empty", "这一组没有 check；未记录不等于验证通过。"));
+    section.append(list);
+    root.append(section);
   });
 }
 
@@ -555,22 +902,29 @@ function renderStory() {
   fillTaskSelect($("story-task-select"), run, record?.id);
   if (!record) {
     clear($("story-hero")).append(h("div", "no-data", "这次运行没有任务记录。"));
+    clear($("story-brief")).append(h("div", "no-data", "没有任务契约，无法解释实验问题。"));
+    clear($("story-causal-chain")).append(h("div", "no-data", "没有 Trace，无法建立可观察因果链。"));
     clear($("story-loop")).append(h("div", "no-data", "没有 Trace，无法绘制 Loop。"));
     clear($("story-parts")).append(h("div", "no-data", "没有工具证据。"));
     clear($("story-rounds")).append(h("div", "no-data", "没有模型轮次。"));
     clear($("story-checks")).append(h("div", "no-data", "没有 checks。"));
     clear($("story-final")).append(h("div", "no-data", "没有最终响应。"));
+    clear($("story-takeaways")).append(h("div", "no-data", "没有可支持的机制结论。"));
     return;
   }
   state.taskId = record.id;
   const grouped = Story.groupRounds(record);
   const path = Story.toolPath(record);
-  renderStoryHero(record, grouped, path);
+  const summary = Story.summarizeExperiment(record, state.data.task_contracts?.[record.id]);
+  renderStoryHero(record, grouped, path, summary);
+  renderStoryBrief(summary, record);
+  renderCausalChain(record, summary);
   const loop = renderLoopDiagram($("story-loop"), record);
   $("story-loop-caption").textContent = loop.caption;
   renderStoryParts(record);
   renderStoryRounds(record);
-  renderChecks($("story-checks"), record.checks);
+  renderCheckGroups($("story-checks"), summary.groups);
+  renderStoryTakeaways(summary);
 
   const finalRoot = clear($("story-final"));
   const finalText = grouped.finalResponse?.content || record.final_text || "";
@@ -1212,9 +1566,10 @@ function renderFirstDivergence(a, b) {
     const grid = h("div", "check-diff-grid");
     [[diff.check.a, "A"], [diff.check.b, "B"]].forEach(([item, side]) => {
       const block = h("div", "check-diff");
-      add(block,
-        h("span", `status-badge ${item?.passed ? "status-pass" : "status-fail"}`, item ? (item.passed ? "PASS" : "FAIL") : "缺失"),
-        h("code", "", item?.check || "该侧没有对应 check"));
+      const badge = item
+        ? checkBadge(Story.classifyCheck(item), `${side} · `)
+        : h("span", "status-badge status-unknown", `${side} · ? 缺失`);
+      add(block, badge, h("code", "", item?.check || `该侧没有对应 check · ${side}`));
       grid.append(block);
     });
     check.append(grid);
@@ -1246,11 +1601,13 @@ function renderTaskComparison(a, b) {
         main.append(h("span", "muted", `${side} · 无任务`));
         return;
       }
-      const button = h("button", `status-badge ${record.passed ? "status-pass" : "status-fail"}`);
+      const status = normalizedStatus(record.passed, record.status);
+      const style = STATUS_STYLE[status];
+      const button = h("button", `status-badge ${style.className}`);
       button.type = "button";
       button.style.border = "0";
-      button.textContent = `${side} · ${record.passed ? "PASS" : "FAIL"}`;
-      button.title = `回放 ${run.label} / ${id}`;
+      button.textContent = `${side} · ${style.symbol} ${status}`;
+      button.title = `回放 ${run.label} / ${id} · ${status}`;
       button.addEventListener("click", () => jumpToRecord(run.id, id, 0));
       main.append(button);
     });

@@ -2,7 +2,7 @@
 
 一个用于系统学习 Agent 工程的最小代码 Agent Harness。项目目标不是再实现一个 Claude Code，而是把 Agent 的关键机制做成可运行、可观察、可评测的实验底座。
 
-当前版本：**v0.6.0 M1.4 Agent Loop Story**。首轮 Harness 基线见 [docs/BASELINE.md](docs/BASELINE.md)，M1.1 上下文实验见 [docs/M1_CONTEXT_BASELINE.md](docs/M1_CONTEXT_BASELINE.md)，M1.2 历史压缩实验见 [docs/M1_2_COMPACTION_BASELINE.md](docs/M1_2_COMPACTION_BASELINE.md)，M1.3 只读拆解台见 [规格说明](docs/specs/m1.3-agent-anatomy/spec.md)，M1.4 任务故事与 Loop 见 [规格说明](docs/specs/m1.4-agent-loop-story/spec.md)。
+当前版本：**v0.7.0 M1.5 Agent Causal Explainer**。首轮 Harness 基线见 [docs/BASELINE.md](docs/BASELINE.md)，M1.1 上下文实验见 [docs/M1_CONTEXT_BASELINE.md](docs/M1_CONTEXT_BASELINE.md)，M1.2 历史压缩实验见 [docs/M1_2_COMPACTION_BASELINE.md](docs/M1_2_COMPACTION_BASELINE.md)，M1.3 只读拆解台见 [规格说明](docs/specs/m1.3-agent-anatomy/spec.md)，M1.4 任务故事与 Loop 见 [规格说明](docs/specs/m1.4-agent-loop-story/spec.md)，M1.5 机制因果解释见 [规格说明](docs/specs/m1.5-agent-causal-explainer/spec.md)。
 
 ## 现在能学到什么
 
@@ -19,6 +19,9 @@
 - 固定任务评测、成功率、步数、Token、上下文、压缩成本和 group 统计
 - 真实模块与七个工具的结构、Schema、源码位置、风险和调用轨迹
 - 按模型轮次把真实 Trace 重构成任务故事，区分工具回环与完成分支
+- 导入任务契约解释“为什么做这个实验”、fixture 规模、过程约束与成功标准
+- 从真实字段匹配建立可观察因果边，把连续分页折叠成可展开的 episode
+- 按教学目的分组 checks，并区分 `PASS / FAIL / SKIP / UNKNOWN`
 - 事件驱动 Loop 回放、本次工具插槽识别，以及 A/B 首个任务/check 分叉定位
 - 并排比较两组配置、指标和逐任务 checks，并可回到两侧真实 Trace
 - 本地模型与云端模型切换
@@ -35,6 +38,7 @@
 - [m1.2 History Compaction](docs/specs/m1.2-history-compaction/spec.md)：压缩策略、证据保留、回退与实验记录
 - [m1.3 Agent Anatomy](docs/specs/m1.3-agent-anatomy/spec.md)：真实模块、工具卡片、Loop 回放和实验对比
 - [m1.4 Agent Loop Story](docs/specs/m1.4-agent-loop-story/spec.md)：按轮次叙事、事件 Loop、乐高工具插槽和 A/B 首分叉
+- [m1.5 Agent Causal Explainer](docs/specs/m1.5-agent-causal-explainer/spec.md)：任务契约、fixture、可观察因果、episode、check 教学与实验边界
 - [模板](docs/templates/spec.md)：创建下一轮规格的起点
 
 行为变更不能只用“功能已增加”作为完成标准，必须有需求 ID、验收标准、测试/Trace/评测证据和已知限制。
@@ -79,7 +83,7 @@ CLOUD_API_KEY=your-key
 python3 main.py --provider cloud --model deepseek-chat
 ```
 
-## Agent Loop Story Dashboard
+## Agent Causal Explainer Dashboard
 
 Dashboard 是现有 registry、Eval JSON 与 Trace 的**本地只读叙事投影**，不会在浏览器里启动 Agent 或执行工具。先从已有报告生成数据，再启动静态服务器：
 
@@ -89,6 +93,7 @@ python3 scripts/export_dashboard.py \
   evals/results/m1_2-extractive-final-20261028.json \
   evals/results/m1_2-model-final-20261028.json \
   --labels off extractive model \
+  --tasks evals/m1_2_tasks.json \
   --output dashboard/data.json
 
 python3 -m http.server 8766
@@ -97,12 +102,12 @@ python3 -m http.server 8766
 
 页面包含四个视图：
 
-- **任务故事**：先看当前任务结果和真实工具路径，再按模型轮次读模型决定、工具参数、observation 摘要和最终回答；原始 JSON 默认折叠；
-- **Loop 回放**：逐事件查看模型输出、工具参数、observation、压缩、上下文曲线和 checks，并观察工具回环或完成分支；
+- **任务故事**：先看实验结论、任务 Prompt、fixture 设计与成功标准，再从字段相等处追到下一次调用；S1–S5 分页默认折叠为 episode，原始 JSON 仍可展开；
+- **Loop 回放**：逐事件查看模型输出、工具参数、observation、压缩、上下文曲线和 checks，并观察工具回环或停止分支；
 - **乐高拆解**：8 个学习模块、7 个真实工具、JSON Schema、风险、源码位置和本次实际使用的工具插槽；完整工具箱默认折叠；
 - **A/B 对比**：先看首个结果不同的任务与首个 checks 分叉，再比较参数、成功率、Token、耗时、步数、压缩/回退和逐任务 checks。
 
-使用现有 M1.2 报告导出的快照为 3 次运行、18 条任务记录。`off` 为 4/6、68,087 总模型 Token；`extractive` 为 3/6、40,340 总模型 Token。这不是一次新的 Live Eval，也不能从单次快照推导稳定因果结论。
+使用现有 M1.2 报告与 `evals/m1_2_tasks.json` 导出的快照为 3 次运行、18 条任务记录和 6 份任务契约。默认任务 fixture 为 `24 × 4 + 3 = 99` 行，形成 S1–S5 分页 episode、4 条强字段边与 S6 停止证据；compaction check 为 `SKIP`，因为本次策略是 `off`。`off` 为 4/6、68,087 总模型 Token；`extractive` 为 3/6、40,340 总模型 Token。这不是一次新的 Live Eval，也不能从单次快照推导稳定因果结论。
 
 `dashboard/data.json` 被 Git 忽略，并标记为 `local-unredacted`。字符截断只控制载荷大小，不是脱敏；其中可能包含真实 observation、工具参数或最终回答，**不要直接公开分享**。没有数据文件时页面会显示导出命令，不会伪造演示运行。
 
@@ -134,7 +139,7 @@ python3 -m unittest discover -s tests -v
 
 覆盖工具 Schema、工作目录越权、符号链接逃逸、参数回传、审批拒绝和最大步数等行为。
 
-当前共有 66 个确定性测试，覆盖 Token usage 提取、Context Snapshot、上下文窗口配置、长文件分页、有界截断、M1/M1.2 fixture、group 指标、压缩触发、证据提取、tool-call 协议、模型摘要回退、摘要成本分账、真实工具目录、报告导出、旧 Trace 关联、轮次故事、工具路径、Loop journey 与 A/B 首分叉。
+当前共有 74 个确定性测试，覆盖 Token usage 提取、Context Snapshot、上下文窗口配置、长文件分页、有界截断、M1/M1.2 fixture、group 指标、压缩触发、证据提取、tool-call 协议、模型摘要回退、摘要成本分账、真实工具目录、报告导出、任务契约、fixture 摘要、旧 Trace 关联、轮次故事、工具路径、Loop journey、因果边、episode、check 分类与 A/B 首分叉。
 
 ## 运行评测
 
@@ -239,7 +244,7 @@ scripts/
 dashboard/
   index.html                  四视图语义结构
   styles.css                  故事、Loop、乐高装配板与响应式视觉
-  story.js                    轮次、工具路径、Loop journey 与 A/B 首分叉纯函数
+  story.js                    轮次、因果边、episode、check 与 A/B 派生纯函数
   app.js                      数据加载、故事、回放、筛选与 A/B 对比
 tests/                        不依赖模型的确定性测试
 docs/
@@ -276,13 +281,18 @@ docs/
       plan.md                 纯函数派生与只读叙事方案
       tasks.md                实现与验证任务账本
       implement.md            四视图验收、边界与负面证据记录
+    m1.5-agent-causal-explainer/
+      spec.md                 任务契约、fixture、因果边、episode 与 check 教学规格
+      plan.md                 静态导出与机制解释方案
+      tasks.md                实现与浏览器验收任务账本
+      implement.md            真实导出、QA 证据、偏差与安全边界
   templates/                  后续规格模板
   decisions/                  ADR 技术决策（含 ADR-004 只读投影）
 ```
 
 ## 下一步
 
-M1.2 已完成历史压缩机制、三策略评测和负面结果记录；M1.3 已把模块、工具、Loop 和实验差异做成真实数据的只读视图；M1.4 进一步按轮次讲故事、突出实际工具插槽并定位 A/B 首分叉，但仍只提升可解释性，不改变 Agent 行为。当前证据仍显示压缩能降低成本，但**没有稳定提高任务成功率的证据**，因此默认保持 `off`。
+M1.2 已完成历史压缩机制、三策略评测和负面结果记录；M1.3 已把模块、工具、Loop 和实验差异做成真实数据的只读视图；M1.4 按轮次讲故事、突出实际工具插槽并定位 A/B 首分叉；M1.5 进一步解释任务契约、fixture、可观察因果、check 目的与实验边界。这些阶段只提升可解释性，不改变 Agent 行为。当前证据仍显示压缩能降低成本，但**没有稳定提高任务成功率的证据**，因此默认保持 `off`。
 
 1. 可选：为压缩证据时序、重复压缩和多次重复实验单独开下一份规格
 2. M2：`apply_patch`、修改后自动测试和验证修复闭环

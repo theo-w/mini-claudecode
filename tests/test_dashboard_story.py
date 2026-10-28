@@ -177,6 +177,188 @@ assert.equal(none.type, 'none');
             same_run,
         )
 
+    def test_explains_fixture_and_classifies_skipped_checks(self) -> None:
+        contract = {
+            "id": "task-1",
+            "prompt": "read all pages",
+            "fixtures": [
+                {
+                    "path": "audit.log",
+                    "kind": "repeated",
+                    "line_count": 99,
+                    "head_lines": 0,
+                    "repeat_lines": 4,
+                    "repeat": 24,
+                    "tail_lines": 3,
+                }
+            ],
+        }
+
+        self.run_story_assertions(
+            """
+const fixture = Story.fixtureSummary(payloads[0]);
+assert.equal(fixture.hasContract, true);
+assert.equal(fixture.totalLineCount, 99);
+assert.match(fixture.composition, /24 × 4 \+ 3 = 99/);
+const skipped = Story.classifyCheck(payloads[1][0]);
+assert.equal(skipped.status, 'SKIP');
+assert.equal(skipped.group, 'integrity');
+assert.match(skipped.skipReason, /策略关闭/);
+const failed = Story.classifyCheck(payloads[1][1]);
+assert.equal(failed.status, 'FAIL');
+const unknown = Story.classifyCheck(payloads[1][2]);
+assert.equal(unknown.status, 'UNKNOWN');
+""",
+            contract,
+            [
+                {"check": "compaction_count_at_least:1:actual=0:skipped=off", "passed": True},
+                {"check": "output_contains:'ACCESS_CODE'", "passed": False},
+                {"check": "new_check", "passed": None},
+            ],
+        )
+
+    def test_groups_checks_by_learning_purpose(self) -> None:
+        checks = [
+            {"check": "tool_succeeded:read_file", "passed": True},
+            {"check": "tool_call_count_at_least:read_file:2:actual=5", "passed": True},
+            {"check": "tool_not_called:grep", "passed": True},
+            {"check": "compaction_count_at_least:1:actual=0:skipped=off", "passed": True},
+            {"check": "output_contains:'M12-VALUE-7319'", "passed": True},
+        ]
+
+        self.run_story_assertions(
+            """
+const groups = Story.checkGroups(payloads[0]);
+assert.deepEqual(groups.slice(0, 4).map((group) => group.id), [
+  'acceptance', 'constraint', 'capability', 'integrity'
+]);
+assert.equal(groups.find((group) => group.id === 'acceptance').checks.length, 1);
+assert.equal(groups.find((group) => group.id === 'constraint').checks.length, 1);
+assert.equal(groups.find((group) => group.id === 'capability').checks.length, 2);
+assert.equal(groups.find((group) => group.id === 'integrity').checks.length, 1);
+assert.match(groups.find((group) => group.id === 'constraint').checks[0].prevents, /grep/);
+""",
+            checks,
+        )
+
+    def test_builds_strong_causal_edge_only_from_matching_fields(self) -> None:
+        def pagination_record(second_start: int) -> dict:
+            events = []
+            for step, start, end, next_start in ((1, 1, 21, 22), (2, second_start, second_start + 20, None)):
+                call_id = f"call-{step}"
+                events.extend(
+                    [
+                        {"event": "model_request", "step": step, "context_chars": 500 + step, "message_count": step * 2},
+                        {
+                            "event": "model_response",
+                            "step": step,
+                            "content": "",
+                            "tool_calls": [{"id": call_id, "name": "read_file", "arguments": {"file_path": "audit.log", "start_line": start}}],
+                        },
+                        {
+                            "event": "tool_call",
+                            "step": step,
+                            "tool": "read_file",
+                            "call_id": call_id,
+                            "arguments": {"file_path": "audit.log", "start_line": start},
+                        },
+                        {
+                            "event": "tool_result",
+                            "step": step,
+                            "tool": "read_file",
+                            "call_id": call_id,
+                            "ok": True,
+                            "content": (
+                                f"total_lines: 42\nreturned_range: {start}-{end}\n"
+                                f"has_more: {'true' if next_start else 'false'}\n"
+                                + (f"next_start_line: {next_start}\n" if next_start else "")
+                                + "---\npage"
+                            ),
+                        },
+                    ]
+                )
+            events.append({"event": "model_response", "step": 3, "content": "DONE", "tool_calls": []})
+            return {"id": "task-1", "passed": True, "checks": [], "events": events}
+
+        contract = {"id": "task-1", "prompt": "read all pages", "fixtures": []}
+
+        self.run_story_assertions(
+            """
+const metadata = Story.parseObservationMetadata(payloads[0].events[3]);
+assert.equal(metadata.has_more, true);
+assert.equal(metadata.next_start_line, 22);
+const chain = Story.buildCausalChain(payloads[0], payloads[1]);
+assert.equal(chain.stages.filter((stage) => stage.kind === 'turn').length, 2);
+assert.equal(chain.strongEdges.length, 1);
+assert.equal(chain.strongEdges[0].field, 'next_start_line');
+assert.equal(chain.strongEdges[0].observationValue, 22);
+assert.equal(chain.strongEdges[0].callValue, 22);
+assert.ok(chain.stages.some((stage) => stage.kind === 'stop'));
+const mismatch = Story.buildCausalChain(payloads[2], payloads[1]);
+assert.equal(mismatch.strongEdges.length, 0);
+assert.equal(mismatch.links.find((link) => link.from === 'turn-1' && link.to === 'turn-2').strong, false);
+""",
+            pagination_record(22),
+            contract,
+            pagination_record(23),
+        )
+
+    def test_collapses_continuous_pagination_into_one_episode(self) -> None:
+        events = []
+        pages = [(1, 1, 21, 22), (2, 22, 42, 43), (3, 43, 63, 64), (4, 64, 84, 85), (5, 85, 99, None)]
+        for step, start, end, next_start in pages:
+            call_id = f"call-{step}"
+            events.extend(
+                [
+                    {"event": "model_request", "step": step, "context_chars": 500 + step, "message_count": step * 2},
+                    {
+                        "event": "model_response",
+                        "step": step,
+                        "tool_calls": [{"id": call_id, "name": "read_file", "arguments": {"file_path": "audit.log", "start_line": start}}],
+                    },
+                    {
+                        "event": "tool_call",
+                        "step": step,
+                        "tool": "read_file",
+                        "call_id": call_id,
+                        "arguments": {"file_path": "audit.log", "start_line": start},
+                    },
+                    {
+                        "event": "tool_result",
+                        "step": step,
+                        "tool": "read_file",
+                        "call_id": call_id,
+                        "ok": True,
+                        "content": (
+                            f"total_lines: 99\nreturned_range: {start}-{end}\n"
+                            f"has_more: {'true' if next_start else 'false'}\n"
+                            + (f"next_start_line: {next_start}\n" if next_start else "")
+                            + "---\npage"
+                        ),
+                    },
+                ]
+            )
+        events.append({"event": "model_response", "step": 6, "content": "DONE", "tool_calls": []})
+        record = {"id": "task-1", "passed": True, "checks": [], "events": events}
+
+        self.run_story_assertions(
+            """
+const chain = Story.buildCausalChain(payloads[0], payloads[1]);
+const episodes = Story.collapseEpisodes(chain);
+assert.equal(chain.strongEdges.length, 4);
+const continuation = episodes.find((episode) => episode.kind === 'continuation');
+assert.ok(continuation);
+assert.equal(continuation.stages.length, 5);
+assert.equal(continuation.firstStep, 1);
+assert.equal(continuation.lastStep, 5);
+assert.match(continuation.detail, /1–21/);
+assert.match(continuation.detail, /85–99/);
+assert.equal(episodes.length, 4);
+""",
+            record,
+            {"id": "task-1", "prompt": "read all pages", "fixtures": [{"path": "audit.log", "kind": "repeated", "line_count": 99}]},
+        )
+
     def test_dashboard_defaults_to_story_and_folds_raw_evidence(self) -> None:
         html = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
         app = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
