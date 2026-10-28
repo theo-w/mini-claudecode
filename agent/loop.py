@@ -211,6 +211,7 @@ class AgentLoop:
             self._record(
                 "invalid_tool_arguments",
                 step=step,
+                call_id=call.id,
                 tool=call.name,
                 arguments=call.arguments,
                 error=content,
@@ -223,6 +224,7 @@ class AgentLoop:
             self._record(
                 "invalid_tool_arguments",
                 step=step,
+                call_id=call.id,
                 tool=call.name,
                 arguments=call.arguments,
                 error=content,
@@ -243,6 +245,7 @@ class AgentLoop:
                 self._record(
                     "approval_denied",
                     step=step,
+                    call_id=call.id,
                     tool=call.name,
                     arguments=arguments,
                 )
@@ -252,6 +255,7 @@ class AgentLoop:
         self._record(
             "tool_call",
             step=step,
+            call_id=call.id,
             tool=call.name,
             arguments=arguments,
         )
@@ -259,6 +263,7 @@ class AgentLoop:
         self._record(
             "tool_result",
             step=step,
+            call_id=call.id,
             tool=call.name,
             ok=result.ok,
             duration_ms=result.duration_ms,

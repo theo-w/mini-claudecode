@@ -65,6 +65,9 @@ class AgentLoopTests(unittest.TestCase):
         event_names = [event["event"] for event in events]
         self.assertIn("tool_call", event_names)
         self.assertIn("tool_result", event_names)
+        for event in events:
+            if event["event"] in {"tool_call", "tool_result"}:
+                self.assertEqual(event["call_id"], "call-1")
         self.assertEqual(provider.calls, 2)
         tool_messages = [message for message in messages if message.get("role") == "tool"]
         self.assertEqual(tool_messages[0]["tool_call_id"], "call-1")
@@ -92,7 +95,8 @@ class AgentLoopTests(unittest.TestCase):
 
         self.assertEqual(result.status, "completed")
         self.assertFalse((self.workspace / "x.txt").exists())
-        self.assertIn("approval_denied", [event["event"] for event in events])
+        denied = next(event for event in events if event["event"] == "approval_denied")
+        self.assertEqual(denied["call_id"], "call-write")
 
     def test_malformed_arguments_are_fed_back_to_model(self) -> None:
         provider = ScriptedProvider(
@@ -112,7 +116,8 @@ class AgentLoopTests(unittest.TestCase):
         result, events = self.run_agent(provider, messages, approval=AutoApprove())
 
         self.assertEqual(result.status, "completed")
-        self.assertIn("invalid_tool_arguments", [event["event"] for event in events])
+        invalid = next(event for event in events if event["event"] == "invalid_tool_arguments")
+        self.assertEqual(invalid["call_id"], "call-bad")
         tool_messages = [message for message in messages if message.get("role") == "tool"]
         self.assertIn("不是合法 JSON", tool_messages[0]["content"])
 

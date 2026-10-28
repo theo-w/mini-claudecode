@@ -2,7 +2,7 @@
 
 一个用于系统学习 Agent 工程的最小代码 Agent Harness。项目目标不是再实现一个 Claude Code，而是把 Agent 的关键机制做成可运行、可观察、可评测的实验底座。
 
-当前版本：**v0.4.0 M1.2 History Compaction**。首轮 Harness 基线见 [docs/BASELINE.md](docs/BASELINE.md)，M1.1 上下文实验见 [docs/M1_CONTEXT_BASELINE.md](docs/M1_CONTEXT_BASELINE.md)，M1.2 历史压缩实验见 [docs/M1_2_COMPACTION_BASELINE.md](docs/M1_2_COMPACTION_BASELINE.md)。
+当前版本：**v0.5.0 M1.3 Agent Anatomy**。首轮 Harness 基线见 [docs/BASELINE.md](docs/BASELINE.md)，M1.1 上下文实验见 [docs/M1_CONTEXT_BASELINE.md](docs/M1_CONTEXT_BASELINE.md)，M1.2 历史压缩实验见 [docs/M1_2_COMPACTION_BASELINE.md](docs/M1_2_COMPACTION_BASELINE.md)，M1.3 只读拆解台见 [规格说明](docs/specs/m1.3-agent-anatomy/spec.md)。
 
 ## 现在能学到什么
 
@@ -17,6 +17,8 @@
 - 证据保留摘要、模型摘要无工具调用、异常回退和主/摘要模型 usage 分账
 - 压缩只影响下一次模型请求，原始工具 observation 仍保留在 Trace
 - 固定任务评测、成功率、步数、Token、上下文、压缩成本和 group 统计
+- 真实模块与七个工具的结构、Schema、源码位置、风险和调用轨迹
+- 逐步回放 Trace，并排比较两组配置、指标和逐任务 checks
 - 本地模型与云端模型切换
 
 ## SDD 规范驱动开发
@@ -29,6 +31,7 @@
 - [v0.2.1 完整示例](docs/specs/v0.2.1-harness-baseline/spec.md)：Harness 基线的 Spec、Plan、Tasks 和 Implement
 - [m1.1 Context Budget](docs/specs/m1.1-context-budget/spec.md)：上下文预算、分页和对照实验的完整规格与证据
 - [m1.2 History Compaction](docs/specs/m1.2-history-compaction/spec.md)：压缩策略、证据保留、回退与实验记录
+- [m1.3 Agent Anatomy](docs/specs/m1.3-agent-anatomy/spec.md)：真实模块、工具卡片、Loop 回放和实验对比
 - [模板](docs/templates/spec.md)：创建下一轮规格的起点
 
 行为变更不能只用“功能已增加”作为完成标准，必须有需求 ID、验收标准、测试/Trace/评测证据和已知限制。
@@ -40,7 +43,7 @@
 - `run_shell` 和 `run_python` 都不是安全沙箱
 - 审批机制可以防止未确认执行，但不能阻止用户批准后的恶意代码
 - 真正的恶意代码隔离需要容器、虚拟机或操作系统级权限控制，计划在后续阶段加入
-- 当前不包含 Web UI、多 Agent、RAG、向量数据库和 MCP 接入
+- 当前包含**本地只读 Dashboard**；不包含在线调参、工具执行式 Web UI、多 Agent、RAG、向量数据库和 MCP 接入
 
 ## 快速开始
 
@@ -73,6 +76,32 @@ CLOUD_API_KEY=your-key
 python3 main.py --provider cloud --model deepseek-chat
 ```
 
+## Agent Anatomy Dashboard
+
+Dashboard 是现有 registry、Eval JSON 与 Trace 的**本地只读投影**，不会在浏览器里启动 Agent 或执行工具。先从已有报告生成数据，再启动静态服务器：
+
+```bash
+python3 scripts/export_dashboard.py \
+  evals/results/m1_2-off-final-20261028.json \
+  evals/results/m1_2-extractive-final-20261028.json \
+  evals/results/m1_2-model-final-20261028.json \
+  --labels off extractive model \
+  --output dashboard/data.json
+
+python3 -m http.server 8766
+# 打开 http://127.0.0.1:8766/dashboard/
+```
+
+页面包含三个视图：
+
+- **架构拆解**：8 个学习模块、7 个真实工具、JSON Schema、风险、源码位置和本次调用；
+- **Loop 回放**：逐事件查看模型输出、工具参数、observation、压缩、上下文曲线和 checks；
+- **实验对比**：选择两份报告，比较参数、成功率、Token、耗时、步数、压缩/回退和逐任务 checks。
+
+使用现有 M1.2 报告导出的快照为 3 次运行、18 条任务记录。`off` 为 4/6、68,087 总模型 Token；`extractive` 为 3/6、40,340 总模型 Token。这不是一次新的 Live Eval，也不能从单次快照推导稳定因果结论。
+
+`dashboard/data.json` 被 Git 忽略，并标记为 `local-unredacted`。字符截断只控制载荷大小，不是脱敏；其中可能包含真实 observation、工具参数或最终回答，**不要直接公开分享**。没有数据文件时页面会显示导出命令，不会伪造演示运行。
+
 ## 工具
 
 | 工具 | 作用 | 审批 |
@@ -101,7 +130,7 @@ python3 -m unittest discover -s tests -v
 
 覆盖工具 Schema、工作目录越权、符号链接逃逸、参数回传、审批拒绝和最大步数等行为。
 
-当前共有 54 个确定性测试，覆盖 Token usage 提取、Context Snapshot、上下文窗口配置、长文件分页、有界截断、M1/M1.2 fixture、group 指标、压缩触发、证据提取、tool-call 协议、模型摘要回退和摘要成本分账。
+当前共有 62 个确定性测试，覆盖 Token usage 提取、Context Snapshot、上下文窗口配置、长文件分页、有界截断、M1/M1.2 fixture、group 指标、压缩触发、证据提取、tool-call 协议、模型摘要回退、摘要成本分账、真实工具目录、报告导出与旧 Trace 关联。
 
 ## 运行评测
 
@@ -163,8 +192,8 @@ traces/session-YYYYMMDD-HHMMSS.jsonl
 run_started
 model_request
 model_response
-tool_call
-tool_result
+tool_call            # 新 Trace 附带 call_id
+tool_result          # 与 tool_call 使用相同 call_id
 approval_denied
 invalid_tool_arguments
 model_error
@@ -182,6 +211,7 @@ Trace 用于复盘 Agent 的真实行为，不依赖模型最后一段自我描�
 ```text
 main.py                       CLI 入口
 agent/
+  anatomy.py                  模块目录、真实工具卡片与源码位置
   approval.py                 人工审批策略
   compaction.py               历史压缩、证据提取与回退
   config.py                   环境与模型配置
@@ -200,7 +230,12 @@ evals/
   m1_tasks.json               5 个 M1.1 上下文任务
   m1_2_tasks.json             6 个 M1.2 历史压缩任务
 scripts/
+  export_dashboard.py         将 Eval JSON 只读导出为本地 Dashboard 数据
   run_eval.py                 评测执行器
+dashboard/
+  index.html                  三视图语义结构
+  styles.css                  响应式视觉与卡片/时间线
+  app.js                      数据加载、回放、筛选与 A/B 对比
 tests/                        不依赖模型的确定性测试
 docs/
   CONSTITUTION.md             长期工程原则与质量门禁
@@ -226,18 +261,24 @@ docs/
       plan.md                 最小可回退方案
       tasks.md                实验任务账本
       implement.md            三策略评测与实施记录
+    m1.3-agent-anatomy/
+      spec.md                 模块、工具、Loop 回放与 A/B 对比规格
+      plan.md                 只读投影与静态页面方案
+      tasks.md                实现与验证任务账本
+      implement.md            真实导出、浏览器 QA 与边界记录
   templates/                  后续规格模板
-  decisions/                  ADR 技术决策
+  decisions/                  ADR 技术决策（含 ADR-004 只读投影）
 ```
 
 ## 下一步
 
-M1.2 已完成历史压缩机制、三策略评测和负面结果记录。当前证据显示压缩能降低成本，但**没有稳定提高任务成功率的证据**，因此默认保持 `off`。
+M1.2 已完成历史压缩机制、三策略评测和负面结果记录；M1.3 已把模块、工具、Loop 和实验差异做成真实数据的只读视图。当前证据仍显示压缩能降低成本，但**没有稳定提高任务成功率的证据**，因此默认保持 `off`。
 
 1. 可选：为压缩证据时序、重复压缩和多次重复实验单独开下一份规格
 2. M2：`apply_patch`、修改后自动测试和验证修复闭环
 3. M3：工具错误分类与可恢复性实验
 4. M4：容器化执行边界
+5. 后续如需要在线调参，单独设计受限运行、审批、密钥和进程边界，不在现有静态页面中开放
 
 完整路线见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

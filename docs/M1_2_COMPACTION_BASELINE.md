@@ -148,7 +148,7 @@ export no_proxy=127.0.0.1,localhost
 先准备环境：
 
 ```bash
-cd /Users/wly/mini-claudecode
+cd /path/to/mini-claudecode
 export NO_PROXY=127.0.0.1,localhost
 export no_proxy=127.0.0.1,localhost
 export REQUEST_TIMEOUT_SECONDS=300

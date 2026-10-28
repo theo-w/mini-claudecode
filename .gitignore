@@ -13,3 +13,4 @@ evals/results/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+dashboard/data.json

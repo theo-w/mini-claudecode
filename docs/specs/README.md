@@ -27,5 +27,6 @@ cp docs/templates/implement.md docs/specs/m1.1-context-budget/implement.md
 - [v0.2.1 Harness Baseline](v0.2.1-harness-baseline/spec.md)（回溯补全，已实现）
 - [m1.1 Context Budget](m1.1-context-budget/spec.md)（已验证，M1 第一阶段）
 - [m1.2 History Compaction](m1.2-history-compaction/spec.md)（已验证，M1 第二阶段；机制通过，成功率收益未证明）
+- [m1.3 Agent Anatomy](m1.3-agent-anatomy/spec.md)（已验证，M1 第三阶段；真实数据只读拆解与 A/B 对比，不新增 Live Eval）
 
 完整流程见 [../SDD.md](../SDD.md)，项目原则见 [../CONSTITUTION.md](../CONSTITUTION.md)。
