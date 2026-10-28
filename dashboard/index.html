@@ -4,9 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Agent Anatomy · Mini Agent Harness</title>
+  <title>Agent Loop Story · Mini Agent Harness</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='12' height='17' rx='3' fill='%23147d73'/%3E%3Crect x='17' y='3' width='12' height='26' rx='3' fill='%23db6b4f'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
+  <script src="story.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -20,9 +21,10 @@
     </div>
     <div class="header-row">
       <nav class="view-tabs" role="tablist" aria-label="实验台视图">
-        <button class="view-tab active" id="tab-anatomy" role="tab" aria-selected="true" aria-controls="view-anatomy" data-view="anatomy"><span>01</span>架构拆解</button>
+        <button class="view-tab active" id="tab-story" role="tab" aria-selected="true" aria-controls="view-story" data-view="story"><span>01</span>任务故事</button>
         <button class="view-tab" id="tab-replay" role="tab" aria-selected="false" aria-controls="view-replay" data-view="replay"><span>02</span>Loop 回放</button>
-        <button class="view-tab" id="tab-compare" role="tab" aria-selected="false" aria-controls="view-compare" data-view="compare"><span>03</span>实验对比</button>
+        <button class="view-tab" id="tab-anatomy" role="tab" aria-selected="false" aria-controls="view-anatomy" data-view="anatomy"><span>03</span>乐高拆解</button>
+        <button class="view-tab" id="tab-compare" role="tab" aria-selected="false" aria-controls="view-compare" data-view="compare"><span>04</span>A/B 对比</button>
       </nav>
       <label class="run-picker">当前运行<select id="global-run-select" aria-label="当前运行"></select></label>
     </div>
@@ -33,11 +35,11 @@
       <div class="empty-illustration" aria-hidden="true"><span></span><span></span><span></span></div>
       <p class="eyebrow">NO FABRICATED RUNS</p>
       <h1>先导出真实实验，再开始拆解</h1>
-      <p>页面没有找到 <code>dashboard/data.json</code>。不会用虚构数据填充卡片或 Loop。</p>
+      <p>页面没有找到 <code>dashboard/data.json</code>。不会用虚构数据填充故事、卡片或 Loop。</p>
       <pre><code>python3 scripts/export_dashboard.py \
   evals/results/your-run.json \
   --labels baseline</code></pre>
-      <p class="muted">从仓库根目录启动 <code>python3 -m http.server 8765</code>，然后刷新本页。</p>
+      <p class="muted">从仓库根目录启动 <code>python3 -m http.server 8766</code>，然后刷新本页。</p>
     </section>
 
     <section id="error-state" class="empty-state error-state" hidden role="alert">
@@ -46,39 +48,69 @@
     </section>
 
     <div id="dashboard-content" hidden>
-      <section id="view-anatomy" class="view-panel" role="tabpanel" aria-labelledby="tab-anatomy">
-        <div class="page-heading">
-          <div><p class="eyebrow">AGENT ANATOMY</p><h1>把 Agent 拆成看得懂的模块</h1><p>每张卡片都来自真实代码与工具注册表。点击工具，查看契约、源码和本次运行中的调用。</p></div>
-          <div class="heading-note"><strong>结构视图</strong><span>不是另一套模拟 Agent</span></div>
+      <section id="view-story" class="view-panel" role="tabpanel" aria-labelledby="tab-story">
+        <div class="page-heading story-heading">
+          <div>
+            <p class="eyebrow">REAL TRACE STORY</p>
+            <h1>一次 Agent 运行，先从故事讲起</h1>
+            <p>先看它做了什么，再看为什么形成这个路径。每个轮次、工具和 observation 都能回到真实事件。</p>
+          </div>
+          <label class="task-picker">选择一次任务<select id="story-task-select" aria-label="任务故事"></select></label>
         </div>
-        <div id="anatomy-stats" class="stat-strip"></div>
-        <section class="section-block">
-          <div class="section-heading"><div><p class="eyebrow">MODULE MAP</p><h2>核心模块与连接</h2></div><p>输入 → 模块 → 输出，连接关系与源码同时可见。</p></div>
-          <div id="module-grid" class="module-grid"></div>
+        <div id="story-hero"></div>
+        <div class="story-grid">
+          <section class="panel cycle-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">ACTUAL LOOP</p><h2>这次运行的真实回环</h2></div>
+              <span class="soft-chip">事件驱动 · 非示意动画</span>
+            </div>
+            <div id="story-loop" class="loop-map" aria-label="本次任务真实 Agent Loop"></div>
+            <div id="story-loop-caption" class="loop-caption"></div>
+          </section>
+          <aside class="panel parts-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">USED PARTS</p><h2>这次插上的零件</h2></div>
+              <span class="soft-chip">来自 Trace</span>
+            </div>
+            <div id="story-parts"></div>
+            <button id="view-all-parts" class="text-button" type="button">查看完整乐高拆解 →</button>
+          </aside>
+        </div>
+        <section class="section-block story-round-section">
+          <div class="section-heading">
+            <div><p class="eyebrow">ROUND BY ROUND</p><h2 id="story-round-title">按模型轮次读故事</h2></div>
+            <p>同一 <code>step</code> 的事件归为同一轮。点击轮次可回到对应真实 Trace。</p>
+          </div>
+          <div id="story-rounds" class="story-rounds"></div>
         </section>
-        <section class="section-block">
-          <div class="section-heading tools-heading"><div><p class="eyebrow">TOOLBOX</p><h2>内置工具箱</h2></div><div class="tool-filters"><input id="tool-search" type="search" placeholder="搜索工具或用途" aria-label="搜索工具"><select id="risk-filter" aria-label="按风险筛选"><option value="all">全部风险</option><option value="read">只读</option><option value="write">写入</option><option value="execute">执行</option></select></div></div>
-          <div id="tool-grid" class="tool-grid"></div>
-        </section>
+        <div class="story-bottom-grid">
+          <section class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">TASK CHECKS</p><h2>完成判定</h2></div><span class="soft-chip">确定性 checks</span></div>
+            <div id="story-checks" class="check-list"></div>
+          </section>
+          <section class="panel final-panel">
+            <div class="panel-heading"><div><p class="eyebrow">FINAL RESPONSE</p><h2>Agent 最后说了什么</h2></div></div>
+            <div id="story-final"></div>
+          </section>
+        </div>
       </section>
 
       <section id="view-replay" class="view-panel" role="tabpanel" aria-labelledby="tab-replay" hidden>
         <div class="page-heading replay-heading">
-          <div><p class="eyebrow">TRACE REPLAY</p><h1>逐步看清 Agent 如何行动</h1><p>播放的是事件证据，不是根据最终回答生成的动画。</p></div>
-          <label class="task-picker">任务<select id="task-select" aria-label="回放任务"></select></label>
+          <div><p class="eyebrow">TRACE REPLAY</p><h1>像看回放一样，理解 Agent 的循环</h1><p>播放的是真实事件。先看人话摘要，再按需展开 observation 和原始 JSON。</p></div>
+          <label class="task-picker">回放任务<select id="task-select" aria-label="回放任务"></select></label>
         </div>
         <div id="task-summary" class="task-summary"></div>
         <section class="flow-section">
-          <div id="loop-flow" class="loop-flow" aria-label="Agent Loop 当前位置"></div>
-          <div class="replay-controls">
-            <button id="prev-event" class="icon-button" aria-label="上一个事件">← 上一步</button>
-            <button id="play-events" class="play-button">▶ 播放</button>
-            <button id="next-event" class="icon-button" aria-label="下一个事件">下一步 →</button>
-            <span id="event-position" class="event-position"></span>
-          </div>
+          <div class="panel-heading"><div><p class="eyebrow">LIVE LOOP POSITION</p><h2>当前事件在回环中的位置</h2></div><div class="replay-controls-inline"><button id="prev-event" class="icon-button" type="button" aria-label="上一个事件">← 上一步</button><button id="play-events" class="play-button" type="button">▶ 播放</button><button id="next-event" class="icon-button" type="button" aria-label="下一个事件">下一步 →</button></div></div>
+          <div id="loop-flow" class="loop-map" aria-label="Agent Loop 当前位置"></div>
+          <div class="replay-status"><span id="event-position" class="event-position"></span><span id="loop-caption" class="loop-caption"></span></div>
         </section>
         <div class="replay-grid">
-          <section class="panel timeline-panel"><div class="panel-heading"><div><p class="eyebrow">EVENT STREAM</p><h2>真实事件流</h2></div><span id="event-count" class="soft-chip"></span></div><div id="event-timeline" class="event-timeline"></div></section>
+          <section class="panel timeline-panel">
+            <div class="panel-heading"><div><p class="eyebrow">EVENT STREAM</p><h2>按轮次看事件</h2></div><span id="event-count" class="soft-chip"></span></div>
+            <div id="event-timeline" class="event-timeline"></div>
+          </section>
           <section class="panel detail-panel"><div id="event-detail"></div></section>
         </div>
         <div class="lower-grid">
@@ -87,20 +119,44 @@
         </div>
       </section>
 
+      <section id="view-anatomy" class="view-panel" role="tabpanel" aria-labelledby="tab-anatomy" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">LEGO ANATOMY</p><h1>把 Agent 拆成可替换的零件</h1><p>模块来自真实代码，工具来自真实 registry。先看本次插上了什么，再打开工具箱理解每个插槽的契约。</p></div>
+          <div class="heading-note"><strong>可拆、可换、可追踪</strong><span>不是拖拽式工作流编辑器</span></div>
+        </div>
+        <div id="anatomy-stats" class="assembly-meta"></div>
+        <section class="section-block">
+          <div class="section-heading"><div><p class="eyebrow">ASSEMBLY MAP</p><h2>Agent 装配图</h2></div><p>连接关系来自模块目录；本次是否有运行证据单独标记。</p></div>
+          <div id="module-grid" class="assembly-board"></div>
+        </section>
+        <section class="section-block used-tools-section">
+          <div class="section-heading"><div><p class="eyebrow">INSTALLED TOOL SLOTS</p><h2>本次运行实际使用的工具</h2></div><p>只展示 Trace 中真实出现的工具；未使用工具不会被说成“参与过”。</p></div>
+          <div id="used-tool-spotlight" class="used-tool-grid"></div>
+        </section>
+        <details class="toolbox-details">
+          <summary><span><strong>打开完整工具箱</strong><small id="toolbox-summary-text">工具契约 · 搜索、风险、Schema、源码和调用入口</small></span><span class="details-arrow">＋</span></summary>
+          <div class="toolbox-body">
+            <div class="tool-filters"><input id="tool-search" type="search" placeholder="搜索工具、用途或风险" aria-label="搜索工具"><select id="risk-filter" aria-label="按风险筛选"><option value="all">全部风险</option><option value="read">只读</option><option value="write">写入</option><option value="execute">执行</option></select></div>
+            <div id="tool-grid" class="tool-grid"></div>
+          </div>
+        </details>
+      </section>
+
       <section id="view-compare" class="view-panel" role="tabpanel" aria-labelledby="tab-compare" hidden>
-        <div class="page-heading"><div><p class="eyebrow">A/B EXPERIMENT</p><h1>同时比较效果、成本与路径</h1><p>只展示可观察差异，不把单次实验的相关性自动解释为因果。</p></div><div class="heading-note"><strong>单次 Live Eval 快照</strong><span>样本量与模型必须一起阅读</span></div></div>
+        <div class="page-heading"><div><p class="eyebrow">A/B EXPERIMENT</p><h1>先看从哪里分叉，再看差了多少</h1><p>只展示可观察差异，不把单次 Live Eval 的相关性自动解释为因果。</p></div><div class="heading-note"><strong>单次 Live Eval 快照</strong><span>样本量与模型必须一起阅读</span></div></div>
         <div class="compare-selectors">
           <label><span class="run-letter run-a">A</span><select id="compare-a" aria-label="对比运行 A"></select></label>
-          <button id="swap-runs" class="icon-button" aria-label="交换 A B 运行">⇄ 交换</button>
+          <button id="swap-runs" class="icon-button" type="button" aria-label="交换 A B 运行">⇄ 交换</button>
           <label><span class="run-letter run-b">B</span><select id="compare-b" aria-label="对比运行 B"></select></label>
         </div>
         <div id="compare-context" class="compare-context"></div>
+        <div id="first-divergence" class="first-divergence"></div>
         <section class="section-block"><div class="section-heading"><div><p class="eyebrow">METRICS</p><h2>结果与成本</h2></div><p>Token 包含主模型与摘要模型，避免只看主模型输入。</p></div><div id="metric-comparison" class="metric-grid"></div></section>
         <div class="compare-panels">
           <section class="panel"><div class="panel-heading"><div><p class="eyebrow">CONFIG DIFF</p><h2>参数差异</h2></div></div><div id="config-comparison" class="table-wrap"></div></section>
           <section class="panel"><div class="panel-heading"><div><p class="eyebrow">TOKEN MIX</p><h2>模型 Token 构成</h2></div></div><div id="token-comparison" class="token-comparison"></div></section>
         </div>
-        <section class="section-block"><div class="section-heading"><div><p class="eyebrow">TASK MATRIX</p><h2>任务与 checks 对照</h2></div><p>点击任务名进入对应运行的真实 Trace。</p></div><div id="task-comparison" class="task-comparison"></div></section>
+        <section class="section-block"><div class="section-heading"><div><p class="eyebrow">TASK MATRIX</p><h2>任务与 checks 对照</h2></div><p>点击任务或状态进入对应运行的真实 Trace。</p></div><div id="task-comparison" class="task-comparison"></div></section>
       </section>
     </div>
   </main>
