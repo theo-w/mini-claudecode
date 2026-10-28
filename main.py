@@ -13,11 +13,36 @@ from tools.builtin import build_registry
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Mini Agent Harness v0.3.0")
+    parser = argparse.ArgumentParser(description="Mini Agent Harness v0.4.0")
     parser.add_argument("--provider", choices=["local", "cloud"], help="覆盖 MODEL_PROVIDER")
     parser.add_argument("--model", help="覆盖当前 provider 的模型名")
     parser.add_argument("--workspace", help="允许 Agent 访问的根目录")
     parser.add_argument("--max-steps", type=int, help="单次任务最大模型轮次")
+    parser.add_argument(
+        "--context-window-tokens",
+        type=int,
+        help="覆盖上下文窗口预算",
+    )
+    parser.add_argument(
+        "--compaction-strategy",
+        choices=["off", "extractive", "model"],
+        help="覆盖历史压缩策略",
+    )
+    parser.add_argument(
+        "--compaction-trigger-tokens",
+        type=int,
+        help="覆盖历史压缩触发 Token",
+    )
+    parser.add_argument(
+        "--compaction-keep-recent-messages",
+        type=int,
+        help="覆盖最近消息保留条数",
+    )
+    parser.add_argument(
+        "--compaction-max-summary-chars",
+        type=int,
+        help="覆盖摘要字符上限",
+    )
     parser.add_argument(
         "--auto-approve",
         action="store_true",
@@ -55,6 +80,22 @@ def print_event(event: dict) -> None:
             )
     elif kind == "model_error":
         print(f"\n❌ 模型调用失败：{event['error']}")
+    elif kind == "history_compaction":
+        if event.get("compacted"):
+            fallback = event.get("fallback_reason")
+            fallback_text = f", fallback={fallback}" if fallback else ""
+            print(
+                "\n🗜️ 历史压缩："
+                f"{event['effective_strategy']} "
+                f"trigger={event['trigger_prompt_tokens']:,} tokens, "
+                f"{event['messages_before']}->{event['messages_after']} messages, "
+                f"{event['context_chars_before']:,}->{event['context_chars_after']:,} chars"
+                f"{fallback_text}"
+            )
+        elif event.get("reason") == "usage_unavailable":
+            print("\n🗜️ 历史压缩跳过：Provider 未返回 prompt usage")
+    elif kind == "compaction_model_error":
+        print(f"\n⚠️ 摘要模型调用失败，将回退确定性摘要：{event['error']}")
 
 
 def main() -> int:
@@ -64,6 +105,11 @@ def main() -> int:
         harness_config = load_harness_config(
             workspace=args.workspace,
             max_steps=args.max_steps,
+            context_window_tokens=args.context_window_tokens,
+            compaction_strategy=args.compaction_strategy,
+            compaction_trigger_tokens=args.compaction_trigger_tokens,
+            compaction_keep_recent_messages=args.compaction_keep_recent_messages,
+            compaction_max_summary_chars=args.compaction_max_summary_chars,
         )
     except ValueError as exc:
         print(f"配置错误：{exc}")
@@ -86,13 +132,26 @@ def main() -> int:
         max_steps=harness_config.max_steps,
         approval_policy=approval,
         context_window_tokens=harness_config.context_window_tokens,
+        compaction_strategy=harness_config.compaction_strategy,
+        compaction_trigger_tokens=harness_config.compaction_trigger_tokens,
+        compaction_keep_recent_messages=harness_config.compaction_keep_recent_messages,
+        compaction_max_summary_chars=harness_config.compaction_max_summary_chars,
         on_event=print_event,
     )
 
-    print("===== Mini Agent Harness v0.3.0 =====")
+    print("===== Mini Agent Harness v0.4.0 =====")
     print(f"模型：{model_config.provider}/{model_config.model}")
     print(f"工作目录：{harness_config.workspace}")
     print(f"上下文窗口预算：{harness_config.context_window_tokens:,} tokens")
+    if harness_config.compaction_strategy == "off":
+        print("历史压缩：off")
+    else:
+        print(
+            "历史压缩："
+            f"{harness_config.compaction_strategy}, "
+            f"触发 {harness_config.compaction_trigger_tokens:,} tokens, "
+            f"保留最近 {harness_config.compaction_keep_recent_messages} 条消息"
+        )
     print(f"单次 observation 预算：{harness_config.max_observation_chars:,} chars")
     print(f"Trace：{tracer.output_path}")
     print("工具：ls, read_file, write_file, grep, find, run_shell, run_python")

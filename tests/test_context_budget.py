@@ -271,6 +271,55 @@ class ContextBudgetTests(unittest.TestCase):
 
         self.assertTrue(found)
 
+    def test_read_file_exposes_file_continuation_after_requested_range(self) -> None:
+        lines = [f"line-{index:03d}" for index in range(1, 121)]
+        (self.workspace / "partial.log").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8"
+        )
+        registry = build_registry(self.workspace, max_observation_chars=2000)
+
+        result = registry.invoke(
+            "read_file",
+            {"file_path": "partial.log", "start_line": 97, "end_line": 100},
+        )
+
+        self.assertTrue(result.ok, result.content)
+        self.assertIn("requested_range: 97-100", result.content)
+        self.assertIn("returned_range: 97-100", result.content)
+        self.assertIn("has_more: false", result.content)
+        self.assertIn("file_has_more: true", result.content)
+        self.assertIn("next_start_line: 101", result.content)
+
+    def test_read_file_clamps_end_and_reports_budget_limited_file_tail(self) -> None:
+        lines = [f"line-{index:03d} " + "x" * 40 for index in range(1, 191)]
+        (self.workspace / "clamped.log").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8"
+        )
+        registry = build_registry(self.workspace, max_observation_chars=700)
+
+        result = registry.invoke(
+            "read_file",
+            {"file_path": "clamped.log", "end_line": 999},
+        )
+
+        self.assertTrue(result.ok, result.content)
+        self.assertIn("requested_range: 1-190", result.content)
+        self.assertIn("has_more: true", result.content)
+        self.assertIn("file_has_more: true", result.content)
+        returned_range = next(
+            line.split(":", 1)[1].strip()
+            for line in result.content.splitlines()
+            if line.startswith("returned_range:")
+        )
+        returned_end = int(returned_range.split("-", 1)[1])
+        next_start_line = next(
+            int(line.split(":", 1)[1].strip())
+            for line in result.content.splitlines()
+            if line.startswith("next_start_line:")
+        )
+        self.assertLess(returned_end, 190)
+        self.assertEqual(next_start_line, returned_end + 1)
+
     def test_observation_is_bounded_and_has_metadata(self) -> None:
         registry = ToolRegistry(self.workspace, max_observation_chars=120)
         registry.register(
@@ -309,6 +358,7 @@ class ContextBudgetTests(unittest.TestCase):
             self.workspace,
             {
                 "generated.log": {
+                    "head_lines": ["START"],
                     "repeat_lines": ["alpha", "beta"],
                     "repeat": 3,
                     "tail_lines": ["ACCESS_CODE: TEST-1"],
@@ -318,7 +368,7 @@ class ContextBudgetTests(unittest.TestCase):
 
         self.assertEqual(
             (self.workspace / "generated.log").read_text(encoding="utf-8"),
-            "alpha\nbeta\nalpha\nbeta\nalpha\nbeta\nACCESS_CODE: TEST-1\n",
+            "START\nalpha\nbeta\nalpha\nbeta\nalpha\nbeta\nACCESS_CODE: TEST-1\n",
         )
 
     def test_m1_task_contract(self) -> None:

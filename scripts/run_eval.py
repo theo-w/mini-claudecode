@@ -29,6 +29,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--provider", choices=["local", "cloud"])
     parser.add_argument("--model")
     parser.add_argument("--output", help="结果 JSON 路径")
+    parser.add_argument("--context-window-tokens", type=int)
+    parser.add_argument(
+        "--compaction-strategy",
+        choices=["off", "extractive", "model"],
+    )
+    parser.add_argument("--compaction-trigger-tokens", type=int)
+    parser.add_argument("--compaction-keep-recent-messages", type=int)
+    parser.add_argument("--compaction-max-summary-chars", type=int)
     return parser.parse_args()
 
 
@@ -38,9 +46,14 @@ def _render_fixture(spec: str | dict[str, Any]) -> str:
     if not isinstance(spec, dict):
         raise TypeError(f"不支持的 fixture 类型：{type(spec).__name__}")
 
+    head_lines = spec.get("head_lines", [])
     repeat_lines = spec.get("repeat_lines", [])
     tail_lines = spec.get("tail_lines", [])
     repeat = spec.get("repeat", 1)
+    if not isinstance(head_lines, list) or not all(
+        isinstance(line, str) for line in head_lines
+    ):
+        raise TypeError("head_lines 必须是字符串数组")
     if not isinstance(repeat_lines, list) or not all(
         isinstance(line, str) for line in repeat_lines
     ):
@@ -52,7 +65,7 @@ def _render_fixture(spec: str | dict[str, Any]) -> str:
     if not isinstance(repeat, int) or repeat < 0:
         raise ValueError("repeat 必须是非负整数")
 
-    rendered_lines = repeat_lines * repeat + tail_lines
+    rendered_lines = head_lines + repeat_lines * repeat + tail_lines
     if not rendered_lines:
         return ""
     return "\n".join(rendered_lines) + "\n"
@@ -71,12 +84,31 @@ def _sum_usage(usages: list[dict[str, Any]], field: str) -> int | None:
     return sum(int(usage.get(field, 0)) for usage in usages)
 
 
+def _combine_usage_sums(*values: int | None) -> int | None:
+    present = [value for value in values if value is not None]
+    return sum(present) if present else None
+
+
 def context_metrics_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     responses = [event for event in events if event.get("event") == "model_response"]
     usages = [
         event["usage"]
         for event in responses
         if isinstance(event.get("usage"), dict)
+    ]
+    compaction_requests = [
+        event for event in events if event.get("event") == "compaction_model_request"
+    ]
+    compaction_responses = [
+        event for event in events if event.get("event") == "compaction_model_response"
+    ]
+    compaction_usages = [
+        event["usage"]
+        for event in compaction_responses
+        if isinstance(event.get("usage"), dict)
+    ]
+    compaction_events = [
+        event for event in events if event.get("event") == "history_compaction"
     ]
     turns = []
     for event in responses:
@@ -111,13 +143,57 @@ def context_metrics_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     observation_values = [
         int(event.get("tool_observation_chars", 0)) for event in responses
     ]
+    main_input = _sum_usage(usages, "prompt_tokens")
+    main_output = _sum_usage(usages, "completion_tokens")
+    main_total = _sum_usage(usages, "total_tokens")
+    compaction_input = _sum_usage(compaction_usages, "prompt_tokens")
+    compaction_output = _sum_usage(compaction_usages, "completion_tokens")
+    compaction_total = _sum_usage(compaction_usages, "total_tokens")
+    compacted_events = [
+        event for event in compaction_events if event.get("compacted")
+    ]
     return {
+        "main_model_calls": len(responses),
         "model_calls": len(responses),
         "usage_calls": len(usages),
         "missing_usage_calls": len(responses) - len(usages),
-        "input_tokens": _sum_usage(usages, "prompt_tokens"),
-        "output_tokens": _sum_usage(usages, "completion_tokens"),
-        "total_tokens": _sum_usage(usages, "total_tokens"),
+        "input_tokens": main_input,
+        "output_tokens": main_output,
+        "total_tokens": main_total,
+        "compaction_model_calls": max(
+            len(compaction_requests), len(compaction_responses)
+        ),
+        "compaction_usage_calls": len(compaction_usages),
+        "missing_compaction_usage_calls": max(
+            0,
+            max(len(compaction_requests), len(compaction_responses))
+            - len(compaction_usages),
+        ),
+        "compaction_input_tokens": compaction_input,
+        "compaction_output_tokens": compaction_output,
+        "compaction_total_tokens": compaction_total,
+        "total_model_input_tokens": _combine_usage_sums(
+            main_input, compaction_input
+        ),
+        "total_model_output_tokens": _combine_usage_sums(
+            main_output, compaction_output
+        ),
+        "total_model_tokens": _combine_usage_sums(main_total, compaction_total),
+        "compactions": len(compacted_events),
+        "compaction_fallbacks": sum(
+            1 for event in compaction_events if event.get("fallback_reason")
+        ),
+        "compaction_saved_chars": sum(
+            int(event.get("context_chars_before", 0))
+            - int(event.get("context_chars_after", 0))
+            for event in compacted_events
+        ),
+        "compaction_summary_chars": sum(
+            int(event.get("summary_chars", 0)) for event in compacted_events
+        ),
+        "compaction_evidence_count": sum(
+            int(event.get("evidence_count", 0)) for event in compacted_events
+        ),
         "peak_prompt_tokens": max(prompt_values, default=None),
         "peak_context_usage_ratio": max(ratio_values, default=None),
         "peak_context_chars": max(context_values, default=None),
@@ -132,37 +208,46 @@ def _average(values: list[float]) -> float | None:
     return round(sum(values) / len(values), 2)
 
 
+def _context_values(
+    records: list[dict[str, Any]],
+    key: str,
+) -> list[int]:
+    values: list[int] = []
+    for record in records:
+        context = record.get("context") or {}
+        value = context.get(key)
+        if value is not None:
+            values.append(int(value))
+    return values
+
+
 def aggregate_records(records: list[dict[str, Any]]) -> dict[str, Any]:
-    input_values = [
-        record["context"]["input_tokens"]
-        for record in records
-        if record["context"]["input_tokens"] is not None
-    ]
-    output_values = [
-        record["context"]["output_tokens"]
-        for record in records
-        if record["context"]["output_tokens"] is not None
-    ]
-    total_values = [
-        record["context"]["total_tokens"]
-        for record in records
-        if record["context"]["total_tokens"] is not None
-    ]
-    peak_chars = [
-        record["context"]["peak_context_chars"]
-        for record in records
-        if record["context"]["peak_context_chars"] is not None
-    ]
-    peak_prompt = [
-        record["context"]["peak_prompt_tokens"]
-        for record in records
-        if record["context"]["peak_prompt_tokens"] is not None
-    ]
+    input_values = _context_values(records, "input_tokens")
+    output_values = _context_values(records, "output_tokens")
+    total_values = _context_values(records, "total_tokens")
+    model_input_values = _context_values(records, "total_model_input_tokens")
+    model_output_values = _context_values(records, "total_model_output_tokens")
+    model_total_values = _context_values(records, "total_model_tokens")
+    compaction_values = _context_values(records, "compactions")
+    fallback_values = _context_values(records, "compaction_fallbacks")
+    peak_chars = _context_values(records, "peak_context_chars")
+    peak_prompt = _context_values(records, "peak_prompt_tokens")
     return {
         "usage_available_tasks": len(input_values),
         "total_input_tokens": sum(input_values) if input_values else None,
         "total_output_tokens": sum(output_values) if output_values else None,
         "total_tokens": sum(total_values) if total_values else None,
+        "total_model_input_tokens": (
+            sum(model_input_values) if model_input_values else None
+        ),
+        "total_model_output_tokens": (
+            sum(model_output_values) if model_output_values else None
+        ),
+        "total_model_tokens": (
+            sum(model_total_values) if model_total_values else None
+        ),
+        "total_compactions": sum(compaction_values),
+        "total_compaction_fallbacks": sum(fallback_values),
         "average_input_tokens": _average(input_values),
         "average_output_tokens": _average(output_values),
         "average_peak_context_chars": _average(peak_chars),
@@ -200,6 +285,7 @@ def run_check(
     result,
     events: list[dict],
     workspace: Path,
+    compaction_strategy: str = "off",
 ) -> tuple[bool, str]:
     check_type = check["type"]
     if check_type == "tool_called":
@@ -208,6 +294,27 @@ def run_check(
             for event in events
         )
         return matched, f"tool_called:{check['name']}"
+    if check_type == "model_call_count_at_least":
+        count = sum(1 for event in events if event.get("event") == "model_response")
+        return (
+            count >= int(check["count"]),
+            f"model_call_count_at_least:{check['count']}:actual={count}",
+        )
+    if check_type == "compaction_count_at_least":
+        count = sum(
+            1
+            for event in events
+            if event.get("event") == "history_compaction" and event.get("compacted")
+        )
+        if compaction_strategy == "off":
+            return (
+                True,
+                f"compaction_count_at_least:{check['count']}:actual={count}:skipped=off",
+            )
+        return (
+            count >= int(check["count"]),
+            f"compaction_count_at_least:{check['count']}:actual={count}",
+        )
     if check_type == "tool_succeeded":
         matched = any(
             event["event"] == "tool_result"
@@ -234,6 +341,18 @@ def run_check(
             count >= int(check["count"]),
             f"tool_call_count_at_least:{check['name']}:{check['count']}:actual={count}",
         )
+    if check_type == "tool_paths_covered":
+        required_paths = [str(path) for path in check["paths"]]
+        covered_paths = {
+            str((event.get("arguments") or {}).get("file_path"))
+            for event in events
+            if event["event"] == "tool_call" and event.get("tool") == check["name"]
+        }
+        missing = [path for path in required_paths if path not in covered_paths]
+        return (
+            not missing,
+            f"tool_paths_covered:{check['name']}:missing={missing}",
+        )
     if check_type == "tool_not_called":
         matched = not any(
             event["event"] == "tool_call" and event.get("tool") == check["name"]
@@ -259,6 +378,22 @@ def run_check(
     if check_type == "output_contains":
         matched = check["text"] in (result.final_text or "")
         return matched, f"output_contains:{check['text']!r}"
+    if check_type == "output_contains_normalized":
+        normalized_output = "".join((result.final_text or "").split())
+        normalized_expected = "".join(check["text"].split())
+        matched = normalized_expected in normalized_output
+        return (
+            matched,
+            f"output_contains_normalized:{check['text']!r}",
+        )
+    if check_type == "output_equals_normalized":
+        normalized_output = "".join((result.final_text or "").split())
+        normalized_expected = "".join(check["text"].split())
+        matched = normalized_output == normalized_expected
+        return (
+            matched,
+            f"output_equals_normalized:{check['text']!r}",
+        )
     if check_type == "file_exists":
         matched = (workspace / check["path"]).is_file()
         return matched, f"file_exists:{check['path']}"
@@ -284,7 +419,13 @@ def main() -> int:
     args = parse_args()
     try:
         model_config = load_model_config(provider=args.provider, model=args.model)
-        harness_config = load_harness_config()
+        harness_config = load_harness_config(
+            context_window_tokens=args.context_window_tokens,
+            compaction_strategy=args.compaction_strategy,
+            compaction_trigger_tokens=args.compaction_trigger_tokens,
+            compaction_keep_recent_messages=args.compaction_keep_recent_messages,
+            compaction_max_summary_chars=args.compaction_max_summary_chars,
+        )
     except ValueError as exc:
         print(f"配置错误：{exc}")
         return 2
@@ -304,7 +445,15 @@ def main() -> int:
     started_all = time.perf_counter()
 
     print(f"模型：{model_config.provider}/{model_config.model}")
-    print(f"任务数：{len(tasks)}\n")
+    print(f"任务数：{len(tasks)}")
+    print(
+        "上下文："
+        f"window={harness_config.context_window_tokens:,} "
+        f"compaction={harness_config.compaction_strategy} "
+        f"trigger={harness_config.compaction_trigger_tokens} "
+        f"keep_recent={harness_config.compaction_keep_recent_messages} "
+        f"summary_max={harness_config.compaction_max_summary_chars}\n"
+    )
 
     for index, task in enumerate(tasks, start=1):
         started = time.perf_counter()
@@ -327,6 +476,14 @@ def main() -> int:
                 max_steps=task.get("max_steps", harness_config.max_steps),
                 approval_policy=AutoApprove(),
                 context_window_tokens=harness_config.context_window_tokens,
+                compaction_strategy=harness_config.compaction_strategy,
+                compaction_trigger_tokens=harness_config.compaction_trigger_tokens,
+                compaction_keep_recent_messages=(
+                    harness_config.compaction_keep_recent_messages
+                ),
+                compaction_max_summary_chars=(
+                    harness_config.compaction_max_summary_chars
+                ),
             )
             messages = initial_messages()
             messages.append({"role": "user", "content": task["prompt"]})
@@ -339,6 +496,7 @@ def main() -> int:
                     result=result,
                     events=tracer.events,
                     workspace=workspace,
+                    compaction_strategy=harness_config.compaction_strategy,
                 )
                 check_results.append({"check": label, "passed": passed})
 
@@ -399,6 +557,12 @@ def main() -> int:
         "model": model_config.model,
         "context_window_tokens": harness_config.context_window_tokens,
         "max_observation_chars": harness_config.max_observation_chars,
+        "compaction": {
+            "strategy": harness_config.compaction_strategy,
+            "trigger_tokens": harness_config.compaction_trigger_tokens,
+            "keep_recent_messages": harness_config.compaction_keep_recent_messages,
+            "max_summary_chars": harness_config.compaction_max_summary_chars,
+        },
         "passed": passed_count,
         "total": total,
         "success_rate": round(passed_count / total, 4),

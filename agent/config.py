@@ -6,6 +6,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from agent.compaction import VALID_COMPACTION_STRATEGIES
+
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -22,6 +24,10 @@ class HarnessConfig:
     max_steps: int = 8
     max_observation_chars: int = 4000
     context_window_tokens: int = 32768
+    compaction_strategy: str = "off"
+    compaction_trigger_tokens: int | None = None
+    compaction_keep_recent_messages: int = 6
+    compaction_max_summary_chars: int = 4000
     shell_timeout_seconds: float = 10.0
     python_timeout_seconds: float = 10.0
     trace_dir: Path = Path("traces")
@@ -86,6 +92,11 @@ def load_harness_config(
     *,
     workspace: str | Path | None = None,
     max_steps: int | None = None,
+    context_window_tokens: int | None = None,
+    compaction_strategy: str | None = None,
+    compaction_trigger_tokens: int | None = None,
+    compaction_keep_recent_messages: int | None = None,
+    compaction_max_summary_chars: int | None = None,
 ) -> HarnessConfig:
     if env is None:
         load_dotenv()
@@ -109,15 +120,68 @@ def load_harness_config(
     if max_observation_chars < 1:
         raise ValueError("MAX_OBSERVATION_CHARS 必须大于 0")
 
-    context_window_tokens = _int_env(env, "CONTEXT_WINDOW_TOKENS", 32768)
-    if context_window_tokens < 1:
+    resolved_context_window_tokens = (
+        context_window_tokens
+        if context_window_tokens is not None
+        else _int_env(env, "CONTEXT_WINDOW_TOKENS", 32768)
+    )
+    if resolved_context_window_tokens < 1:
         raise ValueError("CONTEXT_WINDOW_TOKENS 必须大于 0")
+
+    strategy_value = (
+        compaction_strategy
+        if compaction_strategy is not None
+        else env.get("COMPACTION_STRATEGY", "off")
+    )
+    resolved_compaction_strategy = str(strategy_value).strip().lower()
+    if resolved_compaction_strategy not in VALID_COMPACTION_STRATEGIES:
+        raise ValueError(
+            "COMPACTION_STRATEGY 必须是 off、extractive 或 model，"
+            f"当前值：{resolved_compaction_strategy!r}"
+        )
+
+    default_trigger = max(1, int(resolved_context_window_tokens * 0.7))
+    resolved_compaction_trigger_tokens = (
+        compaction_trigger_tokens
+        if compaction_trigger_tokens is not None
+        else _int_env(env, "COMPACTION_TRIGGER_TOKENS", default_trigger)
+    )
+    if resolved_compaction_trigger_tokens < 1:
+        raise ValueError("COMPACTION_TRIGGER_TOKENS 必须大于 0")
+    if resolved_compaction_trigger_tokens > resolved_context_window_tokens:
+        raise ValueError(
+            "COMPACTION_TRIGGER_TOKENS 不能大于 CONTEXT_WINDOW_TOKENS"
+        )
+
+    resolved_compaction_keep_recent_messages = (
+        compaction_keep_recent_messages
+        if compaction_keep_recent_messages is not None
+        else _int_env(env, "COMPACTION_KEEP_RECENT_MESSAGES", 6)
+    )
+    if resolved_compaction_keep_recent_messages < 1:
+        raise ValueError("COMPACTION_KEEP_RECENT_MESSAGES 必须大于 0")
+
+    resolved_compaction_max_summary_chars = (
+        compaction_max_summary_chars
+        if compaction_max_summary_chars is not None
+        else _int_env(env, "COMPACTION_MAX_SUMMARY_CHARS", 4000)
+    )
+    if resolved_compaction_max_summary_chars < 128:
+        raise ValueError("COMPACTION_MAX_SUMMARY_CHARS 必须大于等于 128")
 
     return HarnessConfig(
         workspace=workspace_path,
         max_steps=resolved_max_steps,
         max_observation_chars=max_observation_chars,
-        context_window_tokens=context_window_tokens,
+        context_window_tokens=resolved_context_window_tokens,
+        compaction_strategy=resolved_compaction_strategy,
+        compaction_trigger_tokens=(
+            None
+            if resolved_compaction_strategy == "off"
+            else resolved_compaction_trigger_tokens
+        ),
+        compaction_keep_recent_messages=resolved_compaction_keep_recent_messages,
+        compaction_max_summary_chars=resolved_compaction_max_summary_chars,
         shell_timeout_seconds=_float_env(env, "SHELL_TIMEOUT_SECONDS", 10.0),
         python_timeout_seconds=_float_env(env, "PYTHON_TIMEOUT_SECONDS", 10.0),
         trace_dir=trace_dir,

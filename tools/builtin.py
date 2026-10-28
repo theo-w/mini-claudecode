@@ -108,6 +108,7 @@ def build_registry(
         def render(selected: list[tuple[int, str]]) -> str:
             returned_end = selected[-1][0]
             has_more = returned_end < requested_end
+            file_has_more = returned_end < len(lines)
             numbered = "\n".join(
                 f"{line_number:>6}\t{line}"
                 for line_number, line in selected
@@ -118,11 +119,11 @@ def build_registry(
                 f"returned_range: {start}-{returned_end}",
                 f"has_more: {str(has_more).lower()}",
             ]
-            if has_more:
+            if has_more or file_has_more:
                 header.append(f"next_start_line: {returned_end + 1}")
             header.extend(
                 [
-                    f"file_has_more: {str(requested_end < len(lines)).lower()}",
+                    f"file_has_more: {str(file_has_more).lower()}",
                     f"budget_limited: {str(has_more).lower()}",
                     f"ends_with_newline: {str(raw.endswith(chr(10))).lower()}",
                     "---",
@@ -246,7 +247,7 @@ def build_registry(
             name="read_file",
             description=(
                 "读取工作目录内文本文件，可按行号范围分页；"
-                "返回 has_more 和 next_start_line 供继续读取。"
+                "返回 has_more、file_has_more 和 next_start_line 供继续读取。"
             ),
             parameters={
                 "type": "object",

@@ -22,12 +22,17 @@ class OpenAICompatibleProvider:
         )
 
     def complete(self, messages: list[dict], tools: list[dict]) -> AssistantTurn:
-        response = self.client.chat.completions.create(
-            model=self.config.model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-        )
+        request: dict = {
+            "model": self.config.model,
+            "messages": messages,
+        }
+        # Summary calls intentionally pass no tools. Omitting the fields is more
+        # portable than sending ``tools=[]`` + ``tool_choice=auto`` to servers
+        # whose OpenAI-compatible schema rejects the combination.
+        if tools:
+            request["tools"] = tools
+            request["tool_choice"] = "auto"
+        response = self.client.chat.completions.create(**request)
         if not response.choices:
             raise ProviderError("模型响应中没有 choices")
 
