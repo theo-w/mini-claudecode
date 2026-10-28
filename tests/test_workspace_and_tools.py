@@ -97,15 +97,17 @@ class WorkspaceAndToolTests(unittest.TestCase):
         self.assertIn("437", result.content)
 
     def test_observation_is_truncated(self) -> None:
-        registry = build_registry(self.workspace, max_observation_chars=10)
+        registry = build_registry(self.workspace, max_observation_chars=120)
         result = registry.invoke(
-            "write_file", {"file_path": "large.txt", "content": "x" * 100}
+            "write_file", {"file_path": "large.txt", "content": "x" * 500}
         )
         self.assertTrue(result.ok)
-        read_result = registry.invoke("read_file", {"file_path": "large.txt"})
-        self.assertTrue(read_result.ok)
-        self.assertLessEqual(len(read_result.content), 10 + len("\n... [内容截断]"))
-        self.assertIn("内容截断", read_result.content)
+        grep_result = registry.invoke(
+            "grep", {"file_path": "large.txt", "pattern": "x"}
+        )
+        self.assertTrue(grep_result.ok)
+        self.assertLessEqual(len(grep_result.content), 120)
+        self.assertIn("observation_truncated", grep_result.content)
 
 
 if __name__ == "__main__":

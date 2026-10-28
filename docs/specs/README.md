@@ -25,5 +25,6 @@ cp docs/templates/implement.md docs/specs/m1.1-context-budget/implement.md
 ## 已有规格
 
 - [v0.2.1 Harness Baseline](v0.2.1-harness-baseline/spec.md)（回溯补全，已实现）
+- [m1.1 Context Budget](m1.1-context-budget/spec.md)（已验证，M1 第一阶段）
 
 完整流程见 [../SDD.md](../SDD.md)，项目原则见 [../CONSTITUTION.md](../CONSTITUTION.md)。

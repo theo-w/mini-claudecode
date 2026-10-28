@@ -13,7 +13,7 @@ from tools.builtin import build_registry
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Mini Agent Harness v0.2.1")
+    parser = argparse.ArgumentParser(description="Mini Agent Harness v0.3.0")
     parser.add_argument("--provider", choices=["local", "cloud"], help="覆盖 MODEL_PROVIDER")
     parser.add_argument("--model", help="覆盖当前 provider 的模型名")
     parser.add_argument("--workspace", help="允许 Agent 访问的根目录")
@@ -38,6 +38,21 @@ def print_event(event: dict) -> None:
         print(f"\n⛔ 已拒绝工具：{event['tool']}")
     elif kind == "invalid_tool_arguments":
         print(f"\n⚠️ 工具参数无效：{event['error']}")
+    elif kind == "model_response":
+        usage = event.get("usage")
+        ratio = event.get("context_usage_ratio")
+        ratio_text = f", {ratio:.2%} window" if ratio is not None else ""
+        if usage:
+            print(
+                f"🧠 step {event['step']}: context {event['context_chars']:,} chars"
+                f"{ratio_text}, "
+                f"tokens {usage['prompt_tokens']}/{usage['completion_tokens']}"
+            )
+        else:
+            print(
+                f"🧠 step {event['step']}: context {event['context_chars']:,} chars"
+                f"{ratio_text}, tokens n/a"
+            )
     elif kind == "model_error":
         print(f"\n❌ 模型调用失败：{event['error']}")
 
@@ -70,12 +85,15 @@ def main() -> int:
         tracer=tracer,
         max_steps=harness_config.max_steps,
         approval_policy=approval,
+        context_window_tokens=harness_config.context_window_tokens,
         on_event=print_event,
     )
 
-    print("===== Mini Agent Harness v0.2.1 =====")
+    print("===== Mini Agent Harness v0.3.0 =====")
     print(f"模型：{model_config.provider}/{model_config.model}")
     print(f"工作目录：{harness_config.workspace}")
+    print(f"上下文窗口预算：{harness_config.context_window_tokens:,} tokens")
+    print(f"单次 observation 预算：{harness_config.max_observation_chars:,} chars")
     print(f"Trace：{tracer.output_path}")
     print("工具：ls, read_file, write_file, grep, find, run_shell, run_python")
     if args.auto_approve:

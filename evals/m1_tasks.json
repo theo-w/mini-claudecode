@@ -1,0 +1,220 @@
+[
+  {
+    "id": "m1_scan_long_file_01",
+    "group": "scan",
+    "prompt": "读取 audits-01.log，找到 ACCESS_CODE 的值并原样报告。文件较长，必须基于真实 observation；如果一次读取没有覆盖全文，按 next_start_line 继续读取，不要猜测。",
+    "setup": {
+      "audits-01.log": {
+        "repeat_lines": [
+          "2026-10-28 INFO scheduler tick completed",
+          "2026-10-28 INFO worker heartbeat healthy",
+          "2026-10-28 DEBUG cache lookup finished",
+          "2026-10-28 WARN retryable timeout observed"
+        ],
+        "repeat": 60,
+        "tail_lines": [
+          "2026-10-28 ERROR calibration validation failed",
+          "ACCESS_CODE: ORBIT-7319",
+          "2026-10-28 INFO graceful shutdown"
+        ]
+      }
+    },
+    "checks": [
+      {
+        "type": "tool_call_count_at_least",
+        "name": "read_file",
+        "count": 2
+      },
+      {
+        "type": "tool_not_called",
+        "name": "grep"
+      },
+      {
+        "type": "tool_succeeded",
+        "name": "read_file"
+      },
+      {
+        "type": "output_contains",
+        "text": "ORBIT-7319"
+      }
+    ],
+    "max_steps": 10
+  },
+  {
+    "id": "m1_scan_long_file_02",
+    "group": "scan",
+    "prompt": "读取 audits-02.log，找到 ACCESS_CODE 的值并原样报告。文件较长，必须基于真实 observation；如果一次读取没有覆盖全文，按工具返回的 next_start_line 继续，不要猜。",
+    "setup": {
+      "audits-02.log": {
+        "repeat_lines": [
+          "2026-10-28 INFO sequence checkpoint one",
+          "2026-10-28 INFO sequence checkpoint two",
+          "2026-10-28 DEBUG allocation recycled",
+          "2026-10-28 WARN queue latency elevated"
+        ],
+        "repeat": 75,
+        "tail_lines": [
+          "2026-10-28 ERROR checksum mismatch",
+          "ACCESS_CODE: CEDAR-4821",
+          "2026-10-28 INFO recovery complete"
+        ]
+      }
+    },
+    "checks": [
+      {
+        "type": "tool_call_count_at_least",
+        "name": "read_file",
+        "count": 2
+      },
+      {
+        "type": "tool_not_called",
+        "name": "grep"
+      },
+      {
+        "type": "tool_succeeded",
+        "name": "read_file"
+      },
+      {
+        "type": "output_contains",
+        "text": "CEDAR-4821"
+      }
+    ],
+    "max_steps": 12
+  },
+  {
+    "id": "m1_grep_first_01",
+    "group": "grep_first",
+    "prompt": "文件 audits-03.log 很长。不要从第一页开始盲目扫描；先使用 grep 定位 ACCESS_CODE，再使用 read_file 只读取命中位置附近的行，最后报告 ACCESS_CODE 的值。",
+    "setup": {
+      "audits-03.log": {
+        "repeat_lines": [
+          "2026-10-28 INFO scheduler tick completed",
+          "2026-10-28 INFO worker heartbeat healthy",
+          "2026-10-28 DEBUG cache lookup finished",
+          "2026-10-28 WARN retryable timeout observed"
+        ],
+        "repeat": 60,
+        "tail_lines": [
+          "2026-10-28 ERROR calibration validation failed",
+          "ACCESS_CODE: ORBIT-7319",
+          "2026-10-28 INFO graceful shutdown"
+        ]
+      }
+    },
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "grep"
+      },
+      {
+        "type": "tool_called_before",
+        "first": "grep",
+        "second": "read_file"
+      },
+      {
+        "type": "tool_succeeded",
+        "name": "read_file"
+      },
+      {
+        "type": "output_contains",
+        "text": "ORBIT-7319"
+      }
+    ],
+    "max_steps": 7
+  },
+  {
+    "id": "m1_grep_first_02",
+    "group": "grep_first",
+    "prompt": "文件 audits-04.log 很长。先用 grep 定位 ACCESS_CODE，再用 read_file 读取命中行附近，最后原样报告 ACCESS_CODE。不要全文逐页扫描。",
+    "setup": {
+      "audits-04.log": {
+        "repeat_lines": [
+          "2026-10-28 INFO sequence checkpoint one",
+          "2026-10-28 INFO sequence checkpoint two",
+          "2026-10-28 DEBUG allocation recycled",
+          "2026-10-28 WARN queue latency elevated"
+        ],
+        "repeat": 75,
+        "tail_lines": [
+          "2026-10-28 ERROR checksum mismatch",
+          "ACCESS_CODE: CEDAR-4821",
+          "2026-10-28 INFO recovery complete"
+        ]
+      }
+    },
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "grep"
+      },
+      {
+        "type": "tool_called_before",
+        "first": "grep",
+        "second": "read_file"
+      },
+      {
+        "type": "tool_succeeded",
+        "name": "read_file"
+      },
+      {
+        "type": "output_contains",
+        "text": "CEDAR-4821"
+      }
+    ],
+    "max_steps": 7
+  },
+  {
+    "id": "m1_multi_file_context",
+    "group": "multi_file",
+    "prompt": "读取 fragments/alpha.txt、fragments/beta.txt 和 fragments/gamma.txt，提取每个文件中的 SEGMENT 值，并按 alpha、beta、gamma 顺序用连字符连接后原样报告。",
+    "setup": {
+      "fragments/alpha.txt": {
+        "repeat_lines": [
+          "alpha noise line 001",
+          "alpha noise line 002",
+          "alpha noise line 003",
+          "alpha noise line 004"
+        ],
+        "repeat": 20,
+        "tail_lines": [
+          "SEGMENT: MERIDIAN"
+        ]
+      },
+      "fragments/beta.txt": {
+        "repeat_lines": [
+          "beta noise line 001",
+          "beta noise line 002",
+          "beta noise line 003",
+          "beta noise line 004"
+        ],
+        "repeat": 20,
+        "tail_lines": [
+          "SEGMENT: LANTERN"
+        ]
+      },
+      "fragments/gamma.txt": {
+        "repeat_lines": [
+          "gamma noise line 001",
+          "gamma noise line 002",
+          "gamma noise line 003",
+          "gamma noise line 004"
+        ],
+        "repeat": 20,
+        "tail_lines": [
+          "SEGMENT: HARBOR"
+        ]
+      }
+    },
+    "checks": [
+      {
+        "type": "tool_succeeded",
+        "name": "read_file"
+      },
+      {
+        "type": "output_contains",
+        "text": "MERIDIAN-LANTERN-HARBOR"
+      }
+    ],
+    "max_steps": 10
+  }
+]

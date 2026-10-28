@@ -3,7 +3,7 @@ from __future__ import annotations
 from openai import OpenAI
 
 from agent.config import ModelConfig
-from agent.models import AssistantTurn, ToolCall
+from agent.models import AssistantTurn, TokenUsage, ToolCall
 
 
 class ProviderError(RuntimeError):
@@ -41,4 +41,28 @@ class OpenAICompatibleProvider:
                     arguments=call.function.arguments,
                 )
             )
-        return AssistantTurn(content=message.content, tool_calls=tool_calls)
+        return AssistantTurn(
+            content=message.content,
+            tool_calls=tool_calls,
+            usage=_extract_usage(response),
+        )
+
+
+def _extract_usage(response) -> TokenUsage | None:
+    """Extract usage without inventing numbers when the provider omits it."""
+
+    raw = getattr(response, "usage", None)
+    if raw is None:
+        return None
+    prompt_tokens = getattr(raw, "prompt_tokens", None)
+    completion_tokens = getattr(raw, "completion_tokens", None)
+    if prompt_tokens is None or completion_tokens is None:
+        return None
+    total_tokens = getattr(raw, "total_tokens", None)
+    if total_tokens is None:
+        total_tokens = int(prompt_tokens) + int(completion_tokens)
+    return TokenUsage(
+        prompt_tokens=int(prompt_tokens),
+        completion_tokens=int(completion_tokens),
+        total_tokens=int(total_tokens),
+    )

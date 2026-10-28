@@ -40,6 +40,8 @@ class ToolSpec:
 
 class ToolRegistry:
     def __init__(self, workspace: Path, max_observation_chars: int = 4000) -> None:
+        if max_observation_chars < 1:
+            raise ValueError("max_observation_chars 必须大于 0")
         self.workspace = workspace.resolve()
         self.max_observation_chars = max_observation_chars
         self._specs: dict[str, ToolSpec] = {}
@@ -85,9 +87,27 @@ class ToolRegistry:
         return ToolResult(name=name, ok=ok, content=content, duration_ms=duration_ms)
 
     def _truncate(self, text: str) -> str:
-        if len(text) <= self.max_observation_chars:
+        budget = self.max_observation_chars
+        if len(text) <= budget:
             return text
-        return text[: self.max_observation_chars] + "\n... [内容截断]"
+
+        original_chars = len(text)
+        kept_chars = max(0, budget)
+        marker = ""
+        while kept_chars >= 0:
+            marker = (
+                "\n[observation_truncated "
+                f"original_chars={original_chars} "
+                f"returned_chars={kept_chars} "
+                f"max_chars={budget}]"
+            )
+            if kept_chars + len(marker) <= budget:
+                return text[:kept_chars] + marker
+            kept_chars -= 1
+
+        # A very small budget cannot fit the diagnostic marker. Returning a
+        # hard-capped fragment is safer than exceeding the observation budget.
+        return "[observation_truncated]"[:budget]
 
     def _validate_arguments(self, schema: dict[str, Any], arguments: dict[str, Any]) -> None:
         if not isinstance(arguments, dict):

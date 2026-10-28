@@ -4,6 +4,7 @@ import json
 from typing import Callable
 
 from agent.approval import ApprovalPolicy, ApprovalRequest
+from agent.context import inspect_context
 from agent.models import AssistantTurn, RunResult, ToolCall
 from agent.prompts import SYSTEM_PROMPT
 from agent.trace import EventTracer
@@ -21,13 +22,17 @@ class AgentLoop:
         *,
         max_steps: int = 8,
         approval_policy: ApprovalPolicy | None = None,
+        context_window_tokens: int = 32768,
         on_event: Callable[[dict], None] | None = None,
     ) -> None:
+        if context_window_tokens < 1:
+            raise ValueError("context_window_tokens 必须大于 0")
         self.provider = provider
         self.registry = registry
         self.tracer = tracer
         self.max_steps = max_steps
         self.approval_policy = approval_policy
+        self.context_window_tokens = context_window_tokens
         self.on_event = on_event
 
     def run(self, messages: list[dict]) -> RunResult:
@@ -35,6 +40,13 @@ class AgentLoop:
         last_text = ""
 
         for step in range(1, self.max_steps + 1):
+            context_snapshot = inspect_context(messages)
+            self._record(
+                "model_request",
+                step=step,
+                context_budget_tokens=self.context_window_tokens,
+                **context_snapshot,
+            )
             try:
                 turn = self.provider.complete(messages, self.registry.openai_schemas())
             except Exception as exc:
@@ -46,6 +58,12 @@ class AgentLoop:
             assistant_message = self._assistant_message(turn)
             messages.append(assistant_message)
             last_text = turn.content or ""
+            usage = turn.usage.to_dict() if turn.usage is not None else None
+            context_usage_ratio = (
+                round(usage["prompt_tokens"] / self.context_window_tokens, 6)
+                if usage is not None
+                else None
+            )
             self._record(
                 "model_response",
                 step=step,
@@ -54,6 +72,10 @@ class AgentLoop:
                     {"id": call.id, "name": call.name, "arguments": call.arguments}
                     for call in turn.tool_calls
                 ],
+                context_budget_tokens=self.context_window_tokens,
+                context_usage_ratio=context_usage_ratio,
+                usage=usage,
+                **context_snapshot,
             )
 
             if not turn.tool_calls:

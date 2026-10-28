@@ -21,6 +21,7 @@ class HarnessConfig:
     workspace: Path
     max_steps: int = 8
     max_observation_chars: int = 4000
+    context_window_tokens: int = 32768
     shell_timeout_seconds: float = 10.0
     python_timeout_seconds: float = 10.0
     trace_dir: Path = Path("traces")
@@ -104,10 +105,19 @@ def load_harness_config(
     if resolved_max_steps < 1:
         raise ValueError("MAX_STEPS 必须大于 0")
 
+    max_observation_chars = _int_env(env, "MAX_OBSERVATION_CHARS", 4000)
+    if max_observation_chars < 1:
+        raise ValueError("MAX_OBSERVATION_CHARS 必须大于 0")
+
+    context_window_tokens = _int_env(env, "CONTEXT_WINDOW_TOKENS", 32768)
+    if context_window_tokens < 1:
+        raise ValueError("CONTEXT_WINDOW_TOKENS 必须大于 0")
+
     return HarnessConfig(
         workspace=workspace_path,
         max_steps=resolved_max_steps,
-        max_observation_chars=_int_env(env, "MAX_OBSERVATION_CHARS", 4000),
+        max_observation_chars=max_observation_chars,
+        context_window_tokens=context_window_tokens,
         shell_timeout_seconds=_float_env(env, "SHELL_TIMEOUT_SECONDS", 10.0),
         python_timeout_seconds=_float_env(env, "PYTHON_TIMEOUT_SECONDS", 10.0),
         trace_dir=trace_dir,

@@ -15,7 +15,7 @@
 
 ## 当前状态
 
-已完成 `v0.2.1 Harness Baseline`：
+已完成 `v0.2.1 Harness Baseline`（M0）：
 
 - Function Calling Agent Loop
 - 7 个工具及合法 OpenAI Tool Schema
@@ -26,6 +26,17 @@
 - 14 个确定性测试
 - 10 个固定 Live Eval 任务
 - 本地/云端模型配置
+
+已完成 `v0.3.0 M1.1 Context Budget`（M1 第一阶段）：
+
+- Provider Token usage 与每轮 Context Snapshot
+- `CONTEXT_WINDOW_TOKENS` 和真实窗口占比
+- 工具 observation 有界截断与长文件分页续读
+- 28 个确定性测试
+- 5 个 M1 固定任务与 group 指标
+- 一次 M1 Live Eval 和原 10 任务回归
+
+完整 M1 尚未完成：历史消息压缩、摘要失真和接近上下文上限的行为仍需在 M1.2 验证。
 
 ## 非目标
 
@@ -66,17 +77,19 @@
 
 重点：
 
-- 分段读取和分页
-- Token/字符预算
-- 工具 observation 的信息密度
-- 历史消息压缩
-- 长文件和大目录策略
+- 分段读取和分页（M1.1 已完成）
+- Token/字符预算（M1.1 已完成观测）
+- 工具 observation 的信息密度（M1.1 已完成首轮对照）
+- 历史消息压缩（待 M1.2）
+- 长文件和大目录策略（长文件分页已完成，目录策略待验证）
 
 验收：
 
-- 长文件任务不因一次 observation 爆上下文
-- 记录每轮 tokens、字符数和步数
-- 对比“完整读取 / 分段读取 / 摘要压缩”的成功率
+- [x] 长文件任务不因一次 observation 爆上下文
+- [x] 记录每轮 tokens、字符数和步数
+- [ ] 对比“完整读取 / 分段读取 / 摘要压缩”的成功率（前两组已有探索性数据，摘要组待 M1.2）
+
+M1.1 的实测与边界见 [M1_CONTEXT_BASELINE.md](M1_CONTEXT_BASELINE.md)。
 
 ### M2：验证闭环
 

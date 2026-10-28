@@ -94,24 +94,59 @@ def build_registry(
             return "文件为空"
 
         start = 1 if start_line is None else start_line
-        end = len(lines) if end_line is None else end_line
-        if start < 1 or end < 1:
+        requested_end = len(lines) if end_line is None else end_line
+        if start < 1 or requested_end < 1:
             raise ValueError("start_line 和 end_line 必须大于等于 1")
-        if end < start:
+        if requested_end < start:
             raise ValueError("end_line 不能小于 start_line")
         if start > len(lines):
             raise ValueError(f"start_line={start} 超出文件总行数 {len(lines)}")
+        requested_end = min(requested_end, len(lines))
 
-        selected = lines[start - 1 : min(end, len(lines))]
-        numbered = "\n".join(
-            f"{line_number:>6}\t{line}"
-            for line_number, line in enumerate(selected, start=start)
-        )
-        return (
-            f"total_lines: {len(lines)}\n"
-            f"ends_with_newline: {str(raw.endswith(chr(10))).lower()}\n"
-            f"---\n{numbered}"
-        )
+        available = list(enumerate(lines[start - 1 : requested_end], start=start))
+
+        def render(selected: list[tuple[int, str]]) -> str:
+            returned_end = selected[-1][0]
+            has_more = returned_end < requested_end
+            numbered = "\n".join(
+                f"{line_number:>6}\t{line}"
+                for line_number, line in selected
+            )
+            header = [
+                f"total_lines: {len(lines)}",
+                f"requested_range: {start}-{requested_end}",
+                f"returned_range: {start}-{returned_end}",
+                f"has_more: {str(has_more).lower()}",
+            ]
+            if has_more:
+                header.append(f"next_start_line: {returned_end + 1}")
+            header.extend(
+                [
+                    f"file_has_more: {str(requested_end < len(lines)).lower()}",
+                    f"budget_limited: {str(has_more).lower()}",
+                    f"ends_with_newline: {str(raw.endswith(chr(10))).lower()}",
+                    "---",
+                ]
+            )
+            return "\n".join(header) + "\n" + numbered
+
+        selected = available
+        rendered = render(selected)
+        while selected and len(rendered) > max_observation_chars:
+            selected = selected[:-1]
+            if selected:
+                rendered = render(selected)
+
+        if not selected:
+            raise ValueError(
+                "单行内容超过 observation 预算，无法在行边界内继续分页；"
+                "请使用 grep 定位或调整 MAX_OBSERVATION_CHARS"
+            )
+        if len(rendered) > max_observation_chars:
+            raise ValueError(
+                "observation 元数据超过字符预算，请调大 MAX_OBSERVATION_CHARS"
+            )
+        return rendered
 
     def write_file(file_path: str, content: str) -> str:
         target = workspace.resolve(file_path)
@@ -209,7 +244,10 @@ def build_registry(
     registry.register(
         ToolSpec(
             name="read_file",
-            description="读取工作目录内文本文件，可按行号范围读取以减少上下文。",
+            description=(
+                "读取工作目录内文本文件，可按行号范围分页；"
+                "返回 has_more 和 next_start_line 供继续读取。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
