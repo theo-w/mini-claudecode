@@ -466,13 +466,23 @@ assert.equal(episodes.length, 4);
             {"id": "task-1", "prompt": "read all pages", "fixtures": [{"path": "audit.log", "kind": "repeated", "line_count": 99}]},
         )
 
-    def test_dashboard_defaults_to_guided_path_and_folds_raw_evidence(self) -> None:
+    def test_dashboard_defaults_to_evolution_course_and_folds_raw_evidence(self) -> None:
         html = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
         app = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
 
         self.assertEqual(html.count('class="view-tab active"'), 1)
         self.assertIn(
-            'id="tab-learn" role="tab" aria-selected="true" '
+            'id="tab-build" role="tab" aria-selected="true" '
+            'aria-controls="view-build" data-view="build"',
+            html,
+        )
+        self.assertIn(
+            '<section id="view-build" class="view-panel build-view" role="tabpanel" '
+            'aria-labelledby="tab-build">',
+            html,
+        )
+        self.assertIn(
+            'id="tab-learn" role="tab" aria-selected="false" '
             'aria-controls="view-learn" data-view="learn"',
             html,
         )
@@ -481,6 +491,9 @@ assert.equal(episodes.length, 4);
             'aria-labelledby="tab-learn">',
             html,
         )
+        self.assertIn('switchView("build")', app)
+        for marker in ("build-chapter-list", "build-content", "build-progress-count"):
+            self.assertIn(marker, html)
         for view in ("story", "replay", "anatomy", "compare"):
             self.assertIn(
                 f'<section id="view-{view}" class="view-panel" role="tabpanel" '

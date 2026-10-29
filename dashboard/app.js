@@ -1,10 +1,14 @@
 "use strict";
 
 const Story = globalThis.AgentStory;
+const Evolution = globalThis.AgentEvolution;
 
 const state = {
   data: null,
-  view: "learn",
+  dataState: "loading",
+  view: "build",
+  buildStep: 0,
+  buildAnswers: {},
   learnStep: 1,
   runId: null,
   taskId: null,
@@ -21,6 +25,16 @@ const LEARN_STEPS = [
   { number: 3, title: "看循环", question: "Observation 怎样进入下一步？" },
   { number: 4, title: "懂测试", question: "这些测试为什么这样判？" },
   { number: 5, title: "做复盘", question: "这次运行能带走什么结论？" },
+];
+
+const BUILD_PARTS = [
+  { id: "model-only", icon: "M", label: "Model" },
+  { id: "first-tool", icon: "T", label: "Tool" },
+  { id: "tool-loop", icon: "L", label: "Loop" },
+  { id: "tool-registry", icon: "R", label: "Registry" },
+  { id: "safety-boundary", icon: "G", label: "Guardrail" },
+  { id: "trace", icon: "E", label: "Trace" },
+  { id: "eval", icon: "V", label: "Eval" },
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -218,23 +232,35 @@ function preferredRecord(run) {
     || null;
 }
 
-function switchView(view) {
-  if (state.view !== view) stopPlayback();
-  state.view = view;
+function syncViewVisibility() {
+  const buildView = state.view === "build";
   document.querySelectorAll(".view-tab").forEach((tab) => {
-    const active = tab.dataset.view === view;
+    const active = tab.dataset.view === state.view;
     tab.classList.toggle("active", active);
     tab.setAttribute("aria-selected", String(active));
     tab.tabIndex = active ? 0 : -1;
   });
   document.querySelectorAll(".view-panel").forEach((panel) => {
-    panel.hidden = panel.id !== `view-${view}`;
+    panel.hidden = panel.id !== `view-${state.view}`;
   });
+  $("dashboard-content").hidden = buildView || !state.data;
+  $("empty-state").hidden = buildView || state.dataState !== "missing";
+  $("error-state").hidden = buildView || state.dataState !== "error";
+}
+
+function switchView(view) {
+  if (state.view !== view) stopPlayback();
+  state.view = view;
+  syncViewVisibility();
   renderView(view);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function renderView(view) {
+  if (view === "build") {
+    renderBuild();
+    return;
+  }
   if (!state.data || !Story) return;
   if (view === "learn") renderLearn();
   if (view === "story") renderStory();
@@ -251,6 +277,332 @@ function renderAll() {
   renderReplay();
   renderAnatomy();
   renderCompare();
+}
+
+function buildCorrectIndex(chapter) {
+  return chapter?.quiz?.options?.findIndex((option) => option.correct === true) ?? -1;
+}
+
+function buildChapterIsCorrect(chapter) {
+  return state.buildAnswers[chapter.id] === buildCorrectIndex(chapter);
+}
+
+function buildCorrectCount() {
+  if (!Evolution) return 0;
+  return Evolution.CHAPTERS.filter(buildChapterIsCorrect).length;
+}
+
+function renderBuildDataStatus() {
+  const root = $("build-data-status");
+  if (!root) return;
+  const status = state.dataState;
+  const content = status === "ready"
+    ? {
+      title: "真实 Trace 已接通",
+      detail: `${state.data?.runs?.length || 0} 次运行可供继续解剖`,
+    }
+    : status === "error"
+      ? {
+        title: "真实数据暂不可用",
+        detail: "课程内容不依赖数据，可以先完成基础课",
+      }
+      : status === "missing"
+        ? {
+          title: "基础课可以独立完成",
+          detail: "真实解剖入口需要 dashboard/data.json",
+        }
+        : {
+          title: "课程可独立阅读",
+          detail: "正在检查真实 Trace…",
+        };
+  root.replaceChildren();
+  root.className = `build-data-status is-${status}`;
+  add(root,
+    h("span", "build-status-dot", ""),
+    h("div", "", h("strong", "", content.title), h("small", "", content.detail)));
+}
+
+function renderBuildChapterList() {
+  const root = $("build-chapter-list");
+  if (!root || !Evolution) return;
+  clear(root);
+  Evolution.CHAPTERS.forEach((chapter, index) => {
+    const active = index === state.buildStep;
+    const correct = buildChapterIsCorrect(chapter);
+    const button = h("button", `build-chapter-button${active ? " active" : ""}${correct ? " is-correct" : ""}`);
+    button.type = "button";
+    button.dataset.buildChapter = String(index);
+    button.setAttribute("aria-label", `第 ${chapter.number} 章：${chapter.title}`);
+    if (active) button.setAttribute("aria-current", "step");
+    add(button,
+      h("span", "build-chapter-number", String(chapter.number).padStart(2, "0")),
+      h("span", "build-chapter-copy", h("strong", "", chapter.routeLabel), h("small", "", chapter.title)),
+      h("span", "build-chapter-state", correct ? "✓" : active ? "在读" : ""));
+    root.append(button);
+  });
+
+  const correctCount = buildCorrectCount();
+  const total = Evolution.CHAPTERS.length;
+  const count = $("build-progress-count");
+  const fill = $("build-progress-fill");
+  const copy = $("build-progress-copy");
+  if (count) count.textContent = `${correctCount} / ${total}`;
+  if (fill) fill.style.width = `${(correctCount / total) * 100}%`;
+  if (copy) {
+    copy.textContent = correctCount === total
+      ? "七章检查全部通过。现在用真实 Trace 验证这条认知路径。"
+      : "每章答对检查题后点亮一个零件；可以随时回看上一章。";
+  }
+}
+
+function renderBuildStack(index) {
+  const root = $("build-stack");
+  if (!root) return;
+  clear(root);
+  BUILD_PARTS.forEach((part, partIndex) => {
+    const installed = partIndex <= index;
+    const current = partIndex === index;
+    const item = h("div", `build-part${installed ? " installed" : " pending"}${current ? " current" : ""}`);
+    if (current) item.setAttribute("aria-current", "step");
+    add(item,
+      h("span", "build-part-icon", part.icon),
+      h("span", "build-part-copy", h("strong", "", part.label), h("small", "", installed ? (current ? "本章装配" : "已装入") : "待加入")),
+      h("span", "build-part-joint", partIndex === BUILD_PARTS.length - 1 ? "" : "＋"));
+    root.append(item);
+  });
+}
+
+function buildLessonSection(marker, label, tone, title, body) {
+  const section = h("section", `build-lesson-section build-${tone}`);
+  const heading = h("div", "build-lesson-heading");
+  add(heading,
+    h("span", "build-lesson-marker", marker),
+    h("div", "", h("span", "build-lesson-label", label), h("h2", "", title)));
+  section.append(heading);
+  if (body) section.append(h("p", "build-lesson-body", body));
+  return section;
+}
+
+function renderBuildQuiz(chapter, mount) {
+  if (!mount) return;
+  clear(mount);
+  const selected = state.buildAnswers[chapter.id];
+  const selectedOption = Number.isInteger(selected) ? chapter.quiz.options[selected] : null;
+  const solved = buildChapterIsCorrect(chapter);
+  const options = h("div", "build-quiz-options");
+
+  chapter.quiz.options.forEach((option, index) => {
+    const isSelected = selected === index;
+    const stateClass = isSelected ? (option.correct ? " is-correct" : " is-wrong") : "";
+    const button = h("button", `build-quiz-option${stateClass}`);
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(isSelected));
+    button.disabled = solved;
+    add(button,
+      h("span", "build-quiz-letter", String.fromCharCode(65 + index)),
+      h("span", "build-quiz-copy", option.text),
+      h("span", "build-quiz-mark", isSelected ? (option.correct ? "✓" : "×") : ""));
+    button.addEventListener("click", () => {
+      state.buildAnswers[chapter.id] = index;
+      renderBuildChapterList();
+      renderBuildQuiz(chapter, mount);
+      const feedback = mount.querySelector(".build-quiz-feedback");
+      feedback?.focus({ preventScroll: true });
+    });
+    options.append(button);
+  });
+  mount.append(options);
+
+  if (selectedOption) {
+    const feedback = h("div", `build-quiz-feedback ${selectedOption.correct ? "correct" : "wrong"}`);
+    feedback.tabIndex = -1;
+    add(feedback,
+      h("strong", "", selectedOption.correct ? "这一章已经理解" : "还差一步"),
+      h("p", "", selectedOption.feedback),
+      h("small", "", selectedOption.correct ? "可以继续下一章，或回到上面的代码再核对一次。" : "再选一次。错误反馈也保留了，帮助看清两个概念的差别。"));
+    mount.append(feedback);
+  } else {
+    mount.append(h("p", "build-quiz-hint", "先选一个答案。选错不会跳章，会解释为什么不够准确。"));
+  }
+}
+
+function renderBuildFuture(chapter) {
+  if (!Evolution || chapter.id !== "eval") return null;
+  const section = h("section", "build-future");
+  const head = h("div", "build-future-head");
+  add(head,
+    h("p", "eyebrow", "AFTER THE BASELINE · WHAT COMES NEXT"),
+    h("h2", "", "先有 Tool、Trace 和 Eval，才轮到 Skill"),
+    h("p", "", "Skill 不是“更高级的 Tool”。它把一类任务的流程知识封装起来，但执行能力、权限和证据边界仍然来自 Tool 与 Harness。"));
+  section.append(head);
+
+  const compare = h("div", "build-tool-skill-grid");
+  [Evolution.TOOL_VS_SKILL.tool, Evolution.TOOL_VS_SKILL.skill].forEach((item, index) => {
+    const card = h("article", `build-concept-card ${index === 0 ? "tool" : "skill"}`);
+    add(card,
+      h("span", "build-concept-index", index === 0 ? "T" : "S"),
+      h("p", "eyebrow", index === 0 ? "EXECUTABLE CAPABILITY" : "REUSABLE PROCESS"),
+      h("h3", "", item.label),
+      h("p", "", item.definition),
+      h("code", "", item.example));
+    compare.append(card);
+  });
+  section.append(compare);
+  section.append(h("p", "build-concept-relation", Evolution.TOOL_VS_SKILL.relation));
+
+  const roadmapHead = h("div", "build-roadmap-head");
+  add(roadmapHead,
+    h("h3", "", "后面的能力，不是下一步的必选项"),
+    h("p", "", "每一项都要说明“为什么现在需要”和“新增了什么失败模式”。"));
+  section.append(roadmapHead);
+  const roadmap = h("div", "build-roadmap-grid");
+  Evolution.ROADMAP.forEach((item, index) => {
+    const card = h("article", "build-roadmap-card");
+    add(card,
+      h("span", "build-roadmap-number", String(index + 1).padStart(2, "0")),
+      h("div", "build-roadmap-title", h("h4", "", item.title), h("span", "", "LATER")),
+      h("p", "", item.trigger),
+      h("small", "", `新增成本：${item.cost}`));
+    roadmap.append(card);
+  });
+  section.append(roadmap);
+
+  const outcomes = h("aside", "build-outcomes");
+  const outcomesHead = h("div", "build-outcomes-head");
+  add(outcomesHead,
+    h("p", "eyebrow", "TAKE AWAY"),
+    h("h3", "", "这条学习路径只留下 5 句话"),
+    h("span", "", "每句话都必须能回到前面某一章的失败与补丁"));
+  outcomes.append(outcomesHead);
+  const list = h("ol", "build-outcome-list");
+  Evolution.OUTCOMES.forEach((item) => list.append(h("li", "", item)));
+  outcomes.append(list);
+  section.append(outcomes);
+
+  const cta = h("div", "build-final-cta");
+  add(cta,
+    h("div", "", h("p", "eyebrow", "NEXT · REAL TRACE"), h("h3", "", "现在把同一套问题带到真实运行里"), h("p", "", "真实解剖不要求你先相信课程。它会打开一次实际 Trace，让你逐个检查工具、Observation、Loop、checks 和最终交付。")),
+    h("span", "build-final-note", state.dataState === "ready" ? "真实数据已就绪" : "需要导出 data.json"));
+  const button = h("button", "build-enter-trace", "进入真实解剖 →");
+  button.type = "button";
+  button.addEventListener("click", () => switchView("learn"));
+  cta.append(button);
+  section.append(cta);
+  return section;
+}
+
+function renderBuild() {
+  const content = $("build-content");
+  if (!content) return;
+  if (!Evolution) {
+    clear(content).append(h("div", "no-data", "evolution.js 未加载，无法显示基础课程。"));
+    return;
+  }
+
+  const index = Math.max(0, Math.min(Evolution.CHAPTERS.length - 1, Number(state.buildStep) || 0));
+  state.buildStep = index;
+  const chapter = Evolution.chapterAt(index);
+  renderBuildDataStatus();
+  renderBuildChapterList();
+  renderBuildStack(index);
+
+  const root = clear(content);
+  const head = h("header", "build-chapter-head");
+  const version = h("div", "build-version-card");
+  add(version,
+    h("span", "", `BUILD ${String(chapter.number).padStart(2, "0")}`),
+    h("strong", "", chapter.number === 1 ? "只有模型" : `＋ ${chapter.routeLabel}`),
+    h("small", "", chapter.number === 1 ? "baseline v0" : `after chapter ${chapter.number - 1}`));
+  const intro = h("div", "build-chapter-intro");
+  const chapterTitle = h("h1", "", chapter.title);
+  chapterTitle.id = "build-chapter-title";
+  chapterTitle.tabIndex = -1;
+  add(intro,
+    h("p", "eyebrow", chapter.kicker),
+    chapterTitle,
+    h("p", "", chapter.promise));
+  head.append(intro, version);
+  root.append(head);
+
+  const progress = h("div", "build-chapter-meta");
+  add(progress,
+    h("span", "", Evolution.progressLabel(index)),
+    h("span", "", "阅读 → 观察 → 解释 → 检查"),
+    h("span", "", Evolution.COURSE_META.disclaimer));
+  root.append(progress);
+
+  const pain = buildLessonSection("01", "旧版本撞墙", "pain", chapter.pain.title, chapter.pain.body);
+  const signal = h("div", "build-signal");
+  add(signal, h("span", "", "观察信号"), h("strong", "", chapter.pain.signal));
+  pain.append(signal);
+  root.append(pain);
+
+  const change = buildLessonSection("02", "最小补丁", "change", chapter.change.title);
+  const file = h("div", "build-code-file");
+  add(file, h("span", "", "补丁文件"), h("code", "", chapter.change.file));
+  change.append(file);
+  change.append(h("pre", "build-code-block", h("code", "", chapter.change.code)));
+  const changeTakeaway = h("div", "build-inline-takeaway");
+  add(changeTakeaway, h("strong", "", "补丁到底加了什么"), h("p", "", chapter.change.takeaway));
+  change.append(changeTakeaway);
+  root.append(change);
+
+  const run = buildLessonSection("03", "看结果", "run", chapter.run.title);
+  const terminal = h("div", "build-terminal");
+  const terminalBar = h("div", "build-terminal-bar");
+  add(terminalBar, h("span", "", ""), h("span", "", ""), h("span", "", ""), h("strong", "", "教学快照 · 非真实运行"));
+  terminal.append(terminalBar);
+  const output = h("div", "build-terminal-output");
+  chapter.run.lines.forEach((line) => output.append(h("div", line ? "build-terminal-line" : "build-terminal-line empty", line || " ")));
+  terminal.append(output);
+  run.append(terminal);
+  const runNote = h("div", "build-run-note");
+  add(runNote, h("strong", "", "怎么读这条输出"), h("p", "", chapter.run.note));
+  run.append(runNote);
+  root.append(run);
+
+  const reasoning = h("div", "build-reason-grid");
+  const why = buildLessonSection("04", "为什么需要", "why", "这个零件补上了什么", chapter.why);
+  const boundary = buildLessonSection("05", "能力边界", "boundary", "它能证明到哪里，不能证明什么", chapter.boundary);
+  add(reasoning, why, boundary);
+  root.append(reasoning);
+
+  const quiz = buildLessonSection("06", "检查理解", "quiz", chapter.quiz.question);
+  const quizIntro = h("p", "build-quiz-intro", "不要靠“看起来眼熟”过关。每个选项都有反馈，答错可以重试。");
+  quiz.append(quizIntro);
+  const quizMount = h("div", "build-quiz-body");
+  renderBuildQuiz(chapter, quizMount);
+  quiz.append(quizMount);
+  root.append(quiz);
+
+  const future = renderBuildFuture(chapter);
+  if (future) root.append(future);
+
+  const prev = $("build-prev");
+  const next = $("build-next");
+  const label = $("build-progress-label");
+  if (prev) {
+    prev.disabled = index === 0;
+    prev.textContent = index === 0 ? "已是第一章" : `← 上一章：${Evolution.chapterAt(index - 1).routeLabel}`;
+  }
+  if (next) {
+    const atEnd = index === Evolution.CHAPTERS.length - 1;
+    next.textContent = atEnd ? "进入真实解剖 →" : `下一章：${Evolution.chapterAt(index + 1).routeLabel} →`;
+    next.classList.toggle("is-finish", atEnd);
+  }
+  if (label) label.textContent = Evolution.progressLabel(index);
+}
+
+function setBuildStep(step, options = {}) {
+  if (!Evolution) return;
+  const numeric = Number(step);
+  state.buildStep = Math.max(0, Math.min(Evolution.CHAPTERS.length - 1, Number.isFinite(numeric) ? numeric : 0));
+  renderBuild();
+  const settings = options && typeof options === "object" ? options : { scroll: Boolean(options) };
+  if (!settings.scroll && !settings.focus) return;
+  const heading = $("build-chapter-title");
+  if (settings.focus) heading?.focus({ preventScroll: true });
+  if (settings.scroll) $("build-content")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function eventIndexForStep(record, step) {
@@ -2790,23 +3142,23 @@ function renderCompare() {
 }
 
 function disableControls(disabled) {
-  document.querySelectorAll(".view-tab, .learn-step, .learn-pager-button, #global-run-select, #task-select, #story-task-select, #learn-task-select, #compare-a, #compare-b, #swap-runs").forEach((element) => {
+  document.querySelectorAll(".learn-step, .learn-pager-button, #global-run-select, #task-select, #story-task-select, #learn-task-select, #compare-a, #compare-b, #swap-runs").forEach((element) => {
     element.disabled = disabled;
   });
 }
 
 function showEmpty() {
-  $("empty-state").hidden = false;
-  $("error-state").hidden = true;
-  $("dashboard-content").hidden = true;
+  state.dataState = "missing";
+  syncViewVisibility();
+  if (state.view === "build") renderBuild();
   disableControls(true);
 }
 
 function showError(message) {
-  $("empty-state").hidden = true;
-  $("error-state").hidden = false;
+  state.dataState = "error";
   $("error-message").textContent = message;
-  $("dashboard-content").hidden = true;
+  syncViewVisibility();
+  if (state.view === "build") renderBuild();
   disableControls(true);
 }
 
@@ -2825,6 +3177,7 @@ async function loadData() {
     }
     if (!data.runs.length) throw new Error("导出文件没有任何运行，请至少传入一份 Eval 报告。");
     state.data = data;
+    state.dataState = "ready";
     const learnRun = data.runs.find((run) => run.records?.some((record) => normalizedStatus(record.passed, record.status) === "FAIL"))
       || data.runs[0];
     const learnRecord = preferredRecord(learnRun);
@@ -2838,7 +3191,9 @@ async function loadData() {
     disableControls(false);
     document.querySelector(".local-badge").title = `生成于 ${data.generated_at} · ${data.data_classification}`;
     renderAll();
-    switchView("learn");
+    syncViewVisibility();
+    if (state.view === "build") renderBuild();
+
   } catch (error) {
     showError(`${error.message}。请检查 data.json，或重新运行导出命令。`);
   }
@@ -2857,6 +3212,19 @@ function bindEvents() {
       switchView(tabs[next].dataset.view);
     });
   });
+  $("build-chapter-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-build-chapter]");
+    if (!button) return;
+    setBuildStep(Number(button.dataset.buildChapter), { scroll: true, focus: true });
+  });
+  $("build-prev").addEventListener("click", () => setBuildStep(state.buildStep - 1, { scroll: true, focus: true }));
+  $("build-next").addEventListener("click", () => {
+    if (!Evolution) return;
+    if (state.buildStep === Evolution.CHAPTERS.length - 1) switchView("learn");
+    else setBuildStep(state.buildStep + 1, { scroll: true, focus: true });
+  });
+  $("empty-back-build").addEventListener("click", () => switchView("build"));
+  $("error-back-build").addEventListener("click", () => switchView("build"));
   $("global-run-select").addEventListener("change", (event) => {
     stopPlayback();
     state.runId = event.target.value;
@@ -2943,4 +3311,5 @@ function bindEvents() {
 }
 
 bindEvents();
+switchView("build");
 loadData();

@@ -7,6 +7,7 @@
   <title>Agent Guided Learning · Mini Agent Harness</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='12' height='17' rx='3' fill='%23147d73'/%3E%3Crect x='17' y='3' width='12' height='26' rx='3' fill='%23db6b4f'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
+  <script src="evolution.js" defer></script>
   <script src="story.js" defer></script>
   <script src="app.js" defer></script>
 </head>
@@ -21,31 +22,92 @@
     </div>
     <div class="header-row">
       <nav class="view-tabs" role="tablist" aria-label="实验台视图">
-        <button class="view-tab active" id="tab-learn" role="tab" aria-selected="true" aria-controls="view-learn" data-view="learn"><span>00</span>开始学习</button>
-        <button class="view-tab" id="tab-story" role="tab" aria-selected="false" aria-controls="view-story" data-view="story"><span>01</span>任务故事</button>
-        <button class="view-tab" id="tab-replay" role="tab" aria-selected="false" aria-controls="view-replay" data-view="replay"><span>02</span>Loop 回放</button>
-        <button class="view-tab" id="tab-anatomy" role="tab" aria-selected="false" aria-controls="view-anatomy" data-view="anatomy"><span>03</span>乐高拆解</button>
-        <button class="view-tab" id="tab-compare" role="tab" aria-selected="false" aria-controls="view-compare" data-view="compare"><span>04</span>A/B 对比</button>
+        <button class="view-tab active" id="tab-build" role="tab" aria-selected="true" aria-controls="view-build" data-view="build"><span>00</span>从零建造</button>
+        <button class="view-tab" id="tab-learn" role="tab" aria-selected="false" aria-controls="view-learn" data-view="learn"><span>01</span>真实解剖</button>
+        <button class="view-tab" id="tab-story" role="tab" aria-selected="false" aria-controls="view-story" data-view="story"><span>02</span>任务故事</button>
+        <button class="view-tab" id="tab-replay" role="tab" aria-selected="false" aria-controls="view-replay" data-view="replay"><span>03</span>Loop 回放</button>
+        <button class="view-tab" id="tab-anatomy" role="tab" aria-selected="false" aria-controls="view-anatomy" data-view="anatomy"><span>04</span>乐高拆解</button>
+        <button class="view-tab" id="tab-compare" role="tab" aria-selected="false" aria-controls="view-compare" data-view="compare"><span>05</span>A/B 对比</button>
       </nav>
-      <label class="run-picker">当前运行<select id="global-run-select" aria-label="当前运行"></select></label>
+      <label class="run-picker">当前运行<select id="global-run-select" aria-label="当前运行"><option value="">课程模式 · 等待数据</option></select></label>
     </div>
   </header>
 
   <main class="app-main">
+    <section id="view-build" class="view-panel build-view" role="tabpanel" aria-labelledby="tab-build">
+      <header class="build-hero">
+        <div class="build-hero-copy">
+          <p class="eyebrow">BUILD FROM ZERO · 7 SMALL STEPS</p>
+          <h1>先造一个会撞墙的 Agent，<br>再理解每个零件为什么出现</h1>
+          <p>不从架构名词开始。每一章先让旧版本失败，再加一个最小补丁，最后观察行为是否真的改变。你会亲手建立一条“问题 → 零件 → 证据”的因果链。</p>
+          <div class="build-hero-chips" aria-label="课程说明">
+            <span>每章只加一个概念</span>
+            <span>确定性教学快照</span>
+            <span>无需 data.json</span>
+          </div>
+        </div>
+        <div class="build-hero-aside">
+          <div class="build-data-status" id="build-data-status">
+            <span class="build-status-dot"></span>
+            <div><strong>课程可独立阅读</strong><small>正在检查真实 Trace…</small></div>
+          </div>
+          <div class="build-blueprint" aria-hidden="true">
+            <span class="blueprint-label">ASSEMBLY LOG</span>
+            <div class="blueprint-row"><i>01</i><strong>Model</strong><em>生成下一步</em></div>
+            <div class="blueprint-row"><i>02</i><strong>Tool</strong><em>影响环境</em></div>
+            <div class="blueprint-row"><i>03</i><strong>Loop</strong><em>把结果送回去</em></div>
+            <div class="blueprint-row"><i>04</i><strong>Guardrail</strong><em>执行前设边界</em></div>
+          </div>
+        </div>
+      </header>
+
+      <div class="build-layout">
+        <aside class="build-rail" aria-label="课程章节与装配进度">
+          <div class="build-progress-card">
+            <div class="build-progress-top">
+              <span class="eyebrow">LEARNING PROGRESS</span>
+              <strong id="build-progress-count">0 / 7</strong>
+            </div>
+            <div class="build-progress-track" aria-hidden="true"><span id="build-progress-fill"></span></div>
+            <p id="build-progress-copy">完成每章检查题，记录真正理解了什么。</p>
+          </div>
+          <div class="build-assembly-card">
+            <div class="build-rail-heading"><span>当前装配</span><small>从零累加</small></div>
+            <div id="build-stack" class="build-stack" aria-label="当前已装配零件"></div>
+          </div>
+          <nav id="build-chapter-list" class="build-chapter-list" aria-label="从零建造课程章节"></nav>
+          <p class="build-rail-note"><strong>阅读方式</strong>先猜旧版本会怎样失败，再看补丁和快照。不要先背结论。</p>
+        </aside>
+
+        <article class="build-stage" aria-labelledby="build-chapter-title">
+          <div id="build-content" class="build-content" aria-live="polite">
+            <div class="build-loading"><span></span><p>正在装配第一课…</p></div>
+          </div>
+          <nav class="build-pager" aria-label="课程章节翻页">
+            <button id="build-prev" class="build-pager-button" type="button">← 上一章</button>
+            <span id="build-progress-label" class="build-progress-label">第 1 / 7 章</span>
+            <button id="build-next" class="build-pager-button primary" type="button">下一章：加一个 Tool →</button>
+          </nav>
+        </article>
+      </div>
+    </section>
+
     <section id="empty-state" class="empty-state" hidden>
       <div class="empty-illustration" aria-hidden="true"><span></span><span></span><span></span></div>
       <p class="eyebrow">NO FABRICATED RUNS</p>
-      <h1>先导出真实实验，再开始拆解</h1>
-      <p>页面没有找到 <code>dashboard/data.json</code>。不会用虚构数据填充故事、卡片或 Loop。</p>
+      <h1>真实解剖还没有实验数据</h1>
+      <p>基础课不依赖数据，可以继续阅读。要打开真实故事、Loop 和乐高拆解，需要先导出 <code>dashboard/data.json</code>；页面不会用虚构运行填充证据。</p>
       <pre><code>python3 scripts/export_dashboard.py \
   evals/results/your-run.json \
   --labels baseline</code></pre>
       <p class="muted">从仓库根目录启动 <code>python3 -m http.server 8766</code>，然后刷新本页。</p>
+      <button id="empty-back-build" class="build-pager-button primary" type="button">← 返回从零建造</button>
     </section>
 
     <section id="error-state" class="empty-state error-state" hidden role="alert">
       <p class="eyebrow">DATA ERROR</p><h1>实验数据无法读取</h1>
       <p id="error-message"></p>
+      <button id="error-back-build" class="build-pager-button primary" type="button">← 返回从零建造</button>
     </section>
 
     <div id="dashboard-content" hidden>
@@ -206,7 +268,7 @@
     </div>
   </main>
 
-  <footer class="app-footer"><strong>local-unredacted</strong><span>导出文件可能含真实 observation；字符截断不是脱敏，请勿直接公开分享。此页面不提供工具执行。</span></footer>
+  <footer class="app-footer"><strong>静态课程 · 只读实验</strong><span>课程输出是确定性教学快照；真实 Trace 数据可能含 observation，字符截断不是脱敏。此页面不提供工具执行。</span></footer>
 
   <dialog id="tool-dialog" class="tool-dialog"><div id="tool-dialog-content"></div></dialog>
 </body>
