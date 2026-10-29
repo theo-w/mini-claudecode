@@ -2,7 +2,7 @@
 
 - Spec：`spec.md`
 - Plan：`plan.md`
-- 状态：In Progress
+- 状态：Verified
 
 ## 任务规则
 
@@ -22,9 +22,9 @@
 | T004 | 增加 Render 静态站点配置 | T001 | AC-005/007 | `render.yaml` | Done |
 | T005 | 验证本地完整七视图无回归 | T002/T003 | AC-004 | Playwright 本地模式 | Done |
 | T006 | 验证公开模式桌面与移动端交互、无错误和无溢出 | T002/T003 | AC-001/002/003 | Playwright 双视口 | Done |
-| T007 | 创建 Render 服务并验证线上基线交互 | T004/T006 | AC-007 | 待创建 Render 服务 | Pending |
-| T008 | 更新 README、ROADMAP、规格索引和实现记录 | T002/T004 | AC-005 | 文档提交 | In Progress |
-| T009 | 将项目与线上 Demo 回填简历站 | T007 | AC-007 | 待回填线上 URL | Pending |
+| T007 | 创建 Render 服务并验证线上基线交互 | T004/T006 | AC-007 | [Render 线上页面](https://mini-agent-harness.onrender.com/)：HTTP 200，Playwright 基线 `BLOCKED / UNKNOWN / NONE`，`data.json` 请求 0，错误 0，溢出 0 | Done |
+| T008 | 更新 README、ROADMAP、规格索引和实现记录 | T002/T004 | AC-005 | README、ROADMAP、spec 索引、implement 验收记录 | Done |
+| T009 | 将项目与线上 Demo 回填简历站 | T007 | AC-007 | 简历站 `index.html`：最近动态 + `PRJ-05` 项目卡，含 GitHub 与线上 Demo | Done |
 
 ## 阻塞项
 
@@ -32,6 +32,6 @@
 
 ## 完成检查
 
-- [ ] 所有任务 Done 或有明确 Blocked 原因
-- [ ] 每个 AC 都能追溯到证据
-- [ ] 未完成项进入下一份规格
+- [x] 所有任务 Done 或有明确 Blocked 原因
+- [x] 每个 AC 都能追溯到证据
+- [x] 未完成项进入下一份规格

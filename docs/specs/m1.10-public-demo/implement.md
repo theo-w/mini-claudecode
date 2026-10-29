@@ -3,7 +3,7 @@
 - Spec：`spec.md`
 - Plan：`plan.md`
 - Tasks：`tasks.md`
-- 状态：In Progress
+- 状态：Verified
 - 实施日期：2026-10-29
 - 验证日期：2026-10-29
 
@@ -19,6 +19,14 @@ Dashboard 新增了明确的公开学习模式：
 - 本地存在 `data.json` 时继续显示完整七视图。
 
 公开版没有生成替代 Trace，也没有把教学模拟包装成真实运行。
+
+线上部署：
+
+- Render Blueprint：`mini-agent-harness`；
+- 发布方式：静态站点，`main` 分支，发布路径 `dashboard`；
+- 部署提交：`f5a86aa`；
+- 公开地址：<https://mini-agent-harness.onrender.com/>；
+- `https://mini-agent-harness.onrender.com/data.json` 返回 `404`。
 
 ## 2. 变更文件
 
@@ -44,7 +52,7 @@ Dashboard 新增了明确的公开学习模式：
 | AC-004 | Playwright：本地完整模式七视图可见，Build/Lego 可操作 | Pass |
 | AC-005 | `test_render_config_publishes_only_dashboard` | Pass |
 | AC-006 | 全量 unittest、`node --check`、`compileall` | Pass |
-| AC-007 | Render 线上 URL + Playwright 基线交互 | Pending |
+| AC-007 | Render 线上 URL + Playwright：HTTP 200；基线 `BLOCKED / UNKNOWN / NONE`；1440×1000 与 390×844 无错误、无横向溢出；`data.json` 请求 0，`/data.json` 返回 404 | Pass |
 
 ## 4. 验证命令
 
@@ -61,7 +69,7 @@ node --check dashboard/story.js
 
 - 本地完整模式：`http://127.0.0.1:8766/dashboard/`
 - 公开模式：`http://127.0.0.1:8766/dashboard/?demo=public`
-- Render 线上页面：待部署与回填。
+- Render 线上页面：<https://mini-agent-harness.onrender.com/>。
 
 ## 5. 计划与实际偏差
 
@@ -85,7 +93,7 @@ node --check dashboard/story.js
 ## 9. 完成声明
 
 - [x] 实现与规格一致（本地）
-- [ ] 验收标准有证据（AC-007 待线上验证）
+- [x] 验收标准有证据（AC-001–AC-007）
 - [x] 测试和静态检查完成（95 项通过）
 - [x] 安全边界描述准确
-- [ ] 文档已同步（部署结果待回填）
+- [x] 文档与简历站已同步

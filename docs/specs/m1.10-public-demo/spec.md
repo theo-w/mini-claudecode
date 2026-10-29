@@ -1,7 +1,7 @@
 # M1.10 Public Learning Demo Specification
 
 - Spec ID：`m1.10-public-demo`
-- 状态：In Progress
+- 状态：Verified
 - 日期：2026-10-29
 - 里程碑：M1.10
 - 关联 ADR：ADR-004（只读投影）
@@ -71,7 +71,7 @@ M1.9 的 Dashboard 已经能通过“从零建造”和“乐高实验”独立�
 |---|---|---|---|
 | NFR-001 | 诚实性 | 明确说明教学模拟与真实 Trace 的边界 | 页面文案 / DOM 契约 |
 | NFR-002 | 安全性 | 公开页面零真实数据、零 API Key、零工具执行 | 文件检查 |
-| NFR-003 | 可回归 | 原有 92 项测试继续通过 | 全量测试 |
+| NFR-003 | 可回归 | 原有 92 项测试继续通过，最终全量 95 项测试通过 | 全量测试 |
 | NFR-004 | 响应式 | 1440px 与 390px 无横向溢出、无页面错误 | Playwright |
 | NFR-005 | 可部署 | Render Blueprint 能从公开仓库直接创建静态站点 | Render 部署验证 |
 

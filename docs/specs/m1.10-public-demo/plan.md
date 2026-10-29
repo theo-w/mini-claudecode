@@ -1,7 +1,7 @@
 # M1.10 Public Learning Demo Implementation Plan
 
 - Spec：`spec.md`
-- 状态：In Progress
+- 状态：Verified
 - 日期：2026-10-29
 - 关联 ADR：ADR-004（只读投影）
 
@@ -96,3 +96,5 @@
 - [x] 单元测试与静态检查
 - [x] Live Eval 说明不适用
 - [x] 文档和部署说明更新
+- [x] Render 静态站点部署完成并回填线上 URL
+- [x] 线上桌面/移动端验收通过
