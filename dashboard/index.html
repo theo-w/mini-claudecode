@@ -98,13 +98,17 @@
     <section id="view-lego" class="view-panel lego-view" role="tabpanel" aria-labelledby="tab-lego" hidden>
       <header class="lego-hero">
         <div class="lego-hero-copy">
-          <p class="eyebrow">M1.8 · LEGO MECHANISM LAB</p>
-          <h1>别只看拆解，<br>亲手装一个 Agent</h1>
-          <p>同一个任务、同一个脚本化模型。你可以自由加入或拆掉 Tool、Loop、Guardrail、Trace 和 Eval，运行后比较：到底完成了什么、卡在哪里、多花了多少时间，以及结果是否可信。</p>
+          <p class="eyebrow">M1.9 · AGENT LEGO LAB</p>
+          <h1>先跑，再装：<br>亲手装一个 Agent</h1>
+          <p>先空手跑一次，看到第一个断点；再只加一块积木并重跑。你会分开看清三件事：任务是否完成、执行是否受控、过程是否可审计。</p>
+          <div class="lego-hero-actions">
+            <button id="lego-baseline-button" class="lego-baseline-button" type="button"><span>01</span> 先跑一次基线 <b>→</b></button>
+            <small>0 个可选零件 · 同一固定任务 · 确定性模拟</small>
+          </div>
           <div class="lego-hero-rules" aria-label="实验规则">
-            <span><i>01</i>自由拆装</span>
-            <span><i>02</i>固定任务</span>
-            <span><i>03</i>前后对比</span>
+            <span><i>01</i>先撞墙</span>
+            <span><i>02</i>只加一块</span>
+            <span><i>03</i>再跑对照</span>
           </div>
         </div>
         <aside class="lego-hero-aside" aria-label="固定模型说明">
@@ -159,6 +163,8 @@
             <div><p class="eyebrow">RUN INSPECTOR</p><h2 id="lego-result-title">这次发生了什么</h2></div>
             <span id="lego-run-badge" class="lego-run-badge">尚未运行</span>
           </div>
+          <div id="lego-outcomes" class="lego-outcomes" aria-live="polite"></div>
+          <div id="lego-next-experiments" class="lego-next-experiments" aria-live="polite"></div>
           <div id="lego-result" class="lego-result" aria-live="polite"></div>
         </aside>
       </div>

@@ -33,5 +33,6 @@ cp docs/templates/implement.md docs/specs/m1.1-context-budget/implement.md
 - [m1.6 Agent Guided Learning Path](m1.6-guided-learning-path/spec.md)（已验证，M1 第六阶段；默认五步学习、四张故事卡、组件装配、测试语义与深挖证据，不新增 Live Eval）
 - [m1.7 Agent Evolution Lab](m1.7-agent-evolution-lab/spec.md)（已验证，M1 第七阶段；7 章从零建造、失败驱动的最小补丁、检查题与 Skill 后续路线，不新增 Tool、Live Eval 或网页执行能力）
 - [m1.8 Agent Lego Lab](m1.8-agent-lego-lab/spec.md)（已验证，M1 第八阶段；8 零件自由装配、确定性事件重放、治理分账、A/B 与实验历史，不新增 Tool、Live Eval 或网页执行能力）
+- [m1.9 Agent Lego Usability](m1.9-agent-lego-usability/spec.md)（已验证，M1 第九阶段；首跑基线、三结论分账、256 组合语义穷举、单块补丁、A/B 归因与移动端可用性修复，不新增 Tool、Live Eval 或网页执行能力）
 
 完整流程见 [../SDD.md](../SDD.md)，项目原则见 [../CONSTITUTION.md](../CONSTITUTION.md)。

@@ -51,7 +51,7 @@ assert.deepEqual(
 );
 for (const [index, part] of Lego.COMPONENTS.entries()) {
   assert.equal(part.order, index + 1);
-  for (const key of ['type', 'icon', 'name', 'method', 'location', 'definition', 'enters', 'accent']) {
+  for (const key of ['type', 'icon', 'name', 'method', 'location', 'definition', 'enters', 'missing', 'accent']) {
     assert.equal(typeof part[key], 'string', `${part.id}.${key} must be text`);
     assert.ok(part[key].trim().length > 0, `${part.id}.${key} must not be empty`);
   }
@@ -59,7 +59,48 @@ for (const [index, part] of Lego.COMPONENTS.entries()) {
   assert.match(part.location, /Harness|runtime|Evaluation|workspace/);
   assert.ok(part.definition.length >= 20);
   assert.ok(part.enters.length >= 12);
+  assert.ok(part.missing.length >= 16);
 }
+"""
+        )
+
+    def test_every_assembly_has_three_independent_and_truthful_outcomes(self) -> None:
+        self.run_lego_assertions(
+            """
+const ids = Lego.COMPONENTS.map((part) => part.id);
+for (let mask = 0; mask < (1 << ids.length); mask += 1) {
+  const selection = ids.filter((_, index) => mask & (1 << index));
+  const run = Lego.simulateRun(selection);
+  assert.deepEqual(run.outcomes.map((outcome) => outcome.key), ['task', 'boundary', 'auditability']);
+  const outcomes = Object.fromEntries(run.outcomes.map((outcome) => [outcome.key, outcome]));
+  assert.equal(outcomes.task.value, run.taskStatus);
+  assert.equal(outcomes.boundary.value, run.safetyStatus);
+
+  const expectedAuditability = run.traceStatus === 'ON'
+    ? (run.evalStatus === 'OFF' ? 'TRACE_ONLY' : 'FULL')
+    : 'NONE';
+  assert.equal(outcomes.auditability.value, expectedAuditability);
+  if (!selection.includes('guardrail')) {
+    assert.equal(outcomes.boundary.value, 'UNKNOWN');
+    assert.doesNotMatch(outcomes.boundary.detail, /已接通|已通过|PASS/);
+  }
+  if (!selection.includes('trace')) {
+    assert.equal(outcomes.auditability.value, 'NONE');
+    assert.doesNotMatch(outcomes.auditability.detail, /已有.*轨迹|轨迹.*已.*记录/);
+  }
+  assert.doesNotMatch(run.narrative, /动作链、执行边界、系统轨迹和任务验收都已接通/);
+  if (!selection.includes('guardrail') || !selection.includes('trace')) {
+    assert.match(run.narrative, /执行边界|可审计|Trace|Guardrail/);
+  }
+}
+
+const evalOnly = Lego.simulateRun(['read_file', 'write_file', 'run_python', 'loop', 'eval']);
+assert.equal(evalOnly.taskStatus, 'PASS');
+assert.equal(evalOnly.outcomes.find((outcome) => outcome.key === 'boundary').value, 'UNKNOWN');
+assert.equal(evalOnly.outcomes.find((outcome) => outcome.key === 'auditability').value, 'NONE');
+assert.match(evalOnly.narrative, /任务.*通过|交付.*通过/);
+assert.match(evalOnly.narrative, /执行边界.*UNKNOWN/);
+assert.match(evalOnly.narrative, /可审计性.*NONE/);
 """
         )
 
@@ -197,6 +238,73 @@ assert.equal(Lego.compareRuns(null, trusted), null);
 """
         )
 
+    def test_compare_runs_identifies_repeat_controlled_and_multivariate_changes(self) -> None:
+        self.run_lego_assertions(
+            """
+const empty = Lego.simulateRun([]);
+const read = Lego.simulateRun(['read_file']);
+const readLoopGuard = Lego.simulateRun(['read_file', 'loop', 'guardrail']);
+
+const repeated = Lego.compareRuns(empty, empty);
+assert.equal(repeated.mode, 'repeat');
+assert.equal(repeated.isRepeat, true);
+assert.equal(repeated.isControlled, false);
+assert.deepEqual(repeated.changedComponents, []);
+assert.match(repeated.summary, /重复运行/);
+assert.doesNotMatch(repeated.summary, /归因给/);
+
+const controlled = Lego.compareRuns(empty, read);
+assert.equal(controlled.mode, 'controlled');
+assert.equal(controlled.isRepeat, false);
+assert.equal(controlled.isControlled, true);
+assert.deepEqual(controlled.changedComponents, ['read_file']);
+assert.deepEqual(controlled.addedComponents, ['read_file']);
+assert.deepEqual(controlled.removedComponents, []);
+assert.equal(controlled.warning, null);
+assert.match(controlled.summary, /受控对照/);
+assert.match(controlled.summary, /读取文件/);
+
+const multivariate = Lego.compareRuns(read, readLoopGuard);
+assert.equal(multivariate.mode, 'multivariate');
+assert.equal(multivariate.isControlled, false);
+assert.deepEqual(multivariate.changedComponents, ['loop', 'guardrail']);
+assert.match(multivariate.warning, /多变量|不能.*归因/);
+assert.match(multivariate.summary, /Loop|Tool Loop/);
+assert.match(multivariate.summary, /执行边界/);
+"""
+        )
+
+    def test_recommendations_are_minimal_single_component_next_experiments(self) -> None:
+        self.run_lego_assertions(
+            """
+const cases = [
+  [[], 'read_file'],
+  [['read_file'], 'loop'],
+  [['read_file', 'loop'], 'write_file'],
+  [['read_file', 'loop', 'write_file'], 'run_python'],
+  [['read_file', 'loop', 'write_file', 'run_python'], 'eval'],
+  [['read_file', 'loop', 'write_file', 'run_python', 'eval'], 'guardrail'],
+  [['read_file', 'loop', 'write_file', 'run_python', 'eval', 'guardrail'], 'trace'],
+  [['read_file', 'loop', 'write_file', 'run_python', 'eval', 'guardrail', 'trace'], 'registry'],
+];
+for (const [selection, expectedId] of cases) {
+  const recommendations = Lego.recommendNextExperiments(selection);
+  assert.ok(recommendations.length >= 1 && recommendations.length <= 3);
+  assert.equal(recommendations[0].componentId, expectedId);
+  for (const recommendation of recommendations) {
+    assert.equal(recommendation.selection.length, selection.length + 1);
+    assert.ok(recommendation.selection.includes(recommendation.componentId));
+    for (const id of selection) assert.ok(recommendation.selection.includes(id));
+    assert.ok(recommendation.reason.length >= 12);
+    assert.ok(recommendation.expected.length >= 8);
+  }
+}
+
+const complete = Lego.recommendNextExperiments(Lego.COMPONENTS.map((part) => part.id));
+assert.deepEqual(complete, []);
+"""
+        )
+
     def test_cost_is_explainable_monotonic_and_not_runtime_latency(self) -> None:
         self.run_lego_assertions(
             """
@@ -245,12 +353,16 @@ assert.match(basis, /Eval/);
             'lego.js',
             'id="tab-lego"',
             'id="view-lego"',
+            'id="lego-baseline-button"',
             'id="lego-shelf"',
             'id="lego-board"',
             'id="lego-run-button"',
             'id="lego-result"',
+            'id="lego-outcomes"',
+            'id="lego-next-experiments"',
             'id="lego-compare"',
             'id="lego-history"',
+            '先跑一次基线',
             '不调用 API · 不执行工具',
         ]:
             self.assertIn(token, html)
@@ -258,14 +370,21 @@ assert.match(basis, /Eval/);
             'function toggleLegoComponent',
             'function loadLegoPreset',
             'function loadLegoHistoryRun',
+            'function startLegoBaseline',
+            'function applyLegoRecommendation',
             'function renderLegoBoard',
+            'function renderLegoOutcomes',
+            'function renderLegoRecommendations',
             'function renderLegoCompare',
             'function startLegoRun',
             'addEventListener("dragstart"',
             'addEventListener("drop"',
             'state.legoRunning',
+            'runPicker.hidden',
         ]:
             self.assertIn(token, app)
+        self.assertIn('缺少它时', app)
+        self.assertIn('模式 === "multivariate"', app)
         self.assertIn('["工具调用", String(result.toolCalls), "脚本内动作次数"]', app)
         self.assertNotRegex(lego, r"ANTHROPIC_API_KEY|OPENAI_API_KEY|fetch\s*\(|XMLHttpRequest|WebSocket|child_process|subprocess|spawn\s*\(")
         self.assertNotRegex(html, r'<script[^>]+src=["\']https?://')

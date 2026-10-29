@@ -252,6 +252,8 @@ function syncViewVisibility() {
   document.querySelectorAll(".view-panel").forEach((panel) => {
     panel.hidden = panel.id !== `view-${state.view}`;
   });
+  const runPicker = document.querySelector(".run-picker");
+  if (runPicker) runPicker.hidden = state.view === "lego";
   $("dashboard-content").hidden = standaloneView || !state.data;
   $("empty-state").hidden = standaloneView || state.dataState !== "missing";
   $("error-state").hidden = standaloneView || state.dataState !== "error";
@@ -710,7 +712,8 @@ function renderLegoShelf() {
       const method = h("code", "lego-part-method", component.method);
       const location = h("small", "lego-part-location", component.location);
       const timing = h("small", "lego-part-timing", `介入时机 · ${component.enters}`);
-      add(card, headRow, method, location, timing);
+      const missing = h("small", "lego-part-missing", h("strong", "", "缺少它时："), component.missing);
+      add(card, headRow, method, location, timing, missing);
       card.addEventListener("click", () => toggleLegoComponent(component.id));
       card.addEventListener("dragstart", (event) => {
         if (state.legoRunning) {
@@ -771,6 +774,7 @@ function renderLegoBrick(component, activeIds) {
       h("span", "lego-empty-plus", "＋"),
       h("strong", "", `${component.name} · 空插槽`),
       h("small", "", component.method),
+      h("small", "lego-empty-missing", component.missing),
       h("span", "lego-empty-hint", "点按装入这个零件"));
   }
   brick.addEventListener("click", () => toggleLegoComponent(component.id));
@@ -897,6 +901,80 @@ function legoGovernanceRows(result) {
       state: result.evalStatus === "PASS" ? "good" : result.evalStatus === "FAIL" ? "bad" : "warn",
     },
   ];
+}
+
+function renderLegoOutcomes() {
+  const root = $("lego-outcomes");
+  if (!root || !Lego) return;
+  clear(root);
+  if (state.legoRunning) {
+    const pending = h("div", "lego-outcomes-pending");
+    add(pending,
+      h("span", "lego-outcomes-pending-mark", "···"),
+      h("div", "", h("strong", "", "正在形成三个独立结论"), h("small", "", "任务、边界、证据分别判断")));
+    root.append(pending);
+    return;
+  }
+  if (!state.legoResult) {
+    const empty = h("div", "lego-outcomes-empty");
+    add(empty,
+      h("strong", "", "跑完后，先看三张结论卡"),
+      h("p", "", "它们不会互相替代：任务通过，不代表执行有边界；有边界，也不代表过程可审计。"));
+    root.append(empty);
+    return;
+  }
+  const panel = h("section", "lego-outcomes-panel");
+  add(panel,
+    h("div", "lego-outcomes-head",
+      h("div", "", h("span", "eyebrow", "THREE SEPARATE CLAIMS"), h("strong", "", "本次运行结论")),
+      h("small", "", "不是总分 · 三项分开判断")),
+    h("div", "lego-outcome-grid",
+      state.legoResult.outcomes.map((outcome) => {
+        const card = h("article", `lego-outcome outcome-${outcome.key} tone-${outcome.tone}`);
+        const mark = { task: "T", boundary: "B", auditability: "E" }[outcome.key] || "•";
+        add(card,
+          h("div", "lego-outcome-top",
+            h("span", "lego-outcome-mark", mark),
+            h("span", "lego-outcome-eyebrow", outcome.eyebrow)),
+          h("strong", "lego-outcome-value", outcome.value),
+          h("span", "lego-outcome-label", outcome.label),
+          h("h3", "", outcome.title),
+          h("p", "", outcome.detail));
+        return card;
+      })));
+  root.append(panel);
+}
+
+function renderLegoRecommendations() {
+  const root = $("lego-next-experiments");
+  if (!root || !Lego) return;
+  clear(root);
+  if (state.legoRunning || !state.legoResult) return;
+  const recommendations = Lego.recommendNextExperiments(legoSelectionIds());
+  if (!recommendations.length) {
+    const complete = h("div", "lego-recommendation-complete");
+    add(complete,
+      h("span", "", "✓"),
+      h("div", "", h("strong", "", "八块零件都已装入"), h("p", "", "现在可以回到 A/B 对比，检查每一块到底改变了什么，而不是继续堆组件。")));
+    root.append(complete);
+    return;
+  }
+  const recommendation = recommendations[0];
+  const card = h("section", `lego-recommendation accent-${recommendation.component.accent}`);
+  const copy = h("div", "lego-recommendation-copy");
+  add(copy,
+    h("span", "eyebrow", "NEXT · ONE VARIABLE ONLY"),
+    h("div", "lego-recommendation-title",
+      h("span", "lego-recommendation-plus", "＋"),
+      h("div", "", h("strong", "", `只加一块：${recommendation.component.name}`), h("small", "", `${recommendation.component.type} · ${recommendation.component.location}`))),
+    h("p", "", recommendation.reason),
+    h("small", "lego-recommendation-expected", `预计变化：${recommendation.expected}`));
+  const action = h("button", "lego-recommendation-action", `只加「${recommendation.component.name}」并再跑 →`);
+  action.type = "button";
+  action.disabled = state.legoRunning;
+  action.addEventListener("click", () => applyLegoRecommendation(recommendation));
+  card.append(copy, action);
+  root.append(card);
 }
 
 function renderLegoResult() {
@@ -1079,6 +1157,20 @@ function renderLegoCompare() {
   });
   root.append(runCards);
 
+  const 模式 = comparison.mode;
+  const modeNotice = h("div", `lego-comparison-mode mode-${模式}`);
+  let modeTitle = "受控对照";
+  let modeCopy = comparison.summary;
+  if (模式 === "multivariate") {
+    modeTitle = "多变量变化 · 不能单因归因";
+  } else if (模式 === "repeat") {
+    modeTitle = "重复运行 · 没有变量变化";
+  }
+  add(modeNotice,
+    h("strong", "", modeTitle),
+    h("p", "", modeCopy));
+  root.append(modeNotice);
+
   const table = h("div", "lego-compare-table");
   const header = h("div", "lego-compare-row lego-compare-header");
   add(header, h("span", "lego-metric-label", "指标"), h("span", "lego-metric-value", "A · 前一次"), h("span", "lego-metric-value", "B · 后一次"), h("span", "lego-metric-delta", "变化"));
@@ -1094,12 +1186,13 @@ function renderLegoCompare() {
   });
   root.append(table);
 
-  const sameSelection = JSON.stringify(a.selection) === JSON.stringify(b.selection);
   const completionDelta = b.completed - a.completed;
   const durationDelta = b.estimatedSeconds - a.estimatedSeconds;
   let insight = "装配和结果都值得逐项读：完成度提高不一定意味着总成本更低，治理能力增强也不等于任务自动成功。";
-  if (sameSelection) {
+  if (comparison.isRepeat) {
     insight = "两次装配相同，所有结果也相同。这说明当前沙盒是确定性的：同一装配不会因为“再跑一次”产生随机差异。";
+  } else if (模式 === "multivariate") {
+    insight = comparison.warning;
   } else if (completionDelta > 0 && backwardGovernanceAdded(a, b)) {
     insight = `B 多完成了 ${completionDelta} 项，但模拟耗时增加了 ${durationDelta.toFixed(2)}s。这是能力与成本的明确取舍，不是单一总分。`;
   } else if (completionDelta > 0) {
@@ -1152,9 +1245,29 @@ function renderLego() {
   renderLegoShelf();
   renderLegoPresets();
   renderLegoBoard();
+  renderLegoOutcomes();
+  renderLegoRecommendations();
   renderLegoResult();
   renderLegoCompare();
   renderLegoHistory();
+}
+
+function startLegoBaseline() {
+  if (!Lego || state.legoRunning) return;
+  state.legoSelection = new Set();
+  resetLegoCurrentResult();
+  startLegoRun();
+}
+
+function applyLegoRecommendation(recommendation) {
+  if (!Lego || state.legoRunning || !recommendation) return;
+  const component = Lego.componentById(recommendation.componentId);
+  if (!component) return;
+  const selection = new Set(legoSelectionIds());
+  selection.add(component.id);
+  state.legoSelection = selection;
+  resetLegoCurrentResult();
+  startLegoRun();
 }
 
 function startLegoRun() {
@@ -1189,6 +1302,11 @@ function startLegoRun() {
     state.legoRunning = false;
     state.legoVisibleEvents = completed.events.length;
     renderLego();
+    if (window.matchMedia?.("(max-width: 900px)")?.matches) {
+      requestAnimationFrame(() => {
+        $("lego-outcomes")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
   }, tickMs);
 }
 
@@ -3802,6 +3920,7 @@ function bindEvents() {
       switchView(tabs[next].dataset.view);
     });
   });
+  $("lego-baseline-button").addEventListener("click", startLegoBaseline);
   $("lego-run-button").addEventListener("click", startLegoRun);
   $("lego-clear-button").addEventListener("click", () => {
     if (state.legoRunning) return;

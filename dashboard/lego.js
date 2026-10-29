@@ -30,6 +30,7 @@
       location: "Harness / ToolRegistry → workspace",
       definition: "把读取文件的意图变成受控的 workspace I/O，并返回 Observation。",
       enters: "模型第一次需要知道文件内容时。",
+      missing: "模型看不到 config.py，只能描述步骤，无法产生第一次真实读取动作。",
       accent: "sky",
       order: 1,
     },
@@ -43,6 +44,7 @@
       location: "Harness / ToolRegistry → workspace",
       definition: "让模型能够修改工作区文件；写入属于有副作用的高风险动作。",
       enters: "Observation 表明需要修改，且已有写入工具时。",
+      missing: "模型知道目标版本是 1.3.0，却没有能力修改文件，任务会停在读取之后。",
       accent: "coral",
       order: 2,
     },
@@ -56,6 +58,7 @@
       location: "Harness / ToolRegistry → child process",
       definition: "执行测试脚本，把真实退出结果和输出带回 Agent。",
       enters: "文件修改后，需要验证交付而非相信模型声明时。",
+      missing: "文件可能已经改动，但没有测试 Observation；模型说完成也不能替代测试通过。",
       accent: "sun",
       order: 3,
     },
@@ -69,6 +72,7 @@
       location: "Agent runtime / between model and tools",
       definition: "把 tool_result 写回下一轮消息，让模型依据真实 Observation 继续决策。",
       enters: "每次工具调用之后；没有它，一次行动无法变成连续任务。",
+      missing: "工具只能响一次；Observation 回不到模型，第二步决策不会发生。",
       accent: "mint",
       order: 4,
     },
@@ -82,6 +86,7 @@
       location: "Harness / tool contract boundary",
       definition: "统一工具 Schema、参数校验、handler 和错误结构，减少手写分发的不一致。",
       enters: "工具数量增长后；它不替模型变聪明，但让契约更稳定。",
+      missing: "少量工具仍可能靠手写分发跑通，但 Schema、参数校验和错误结构会逐渐不一致。",
       accent: "sand",
       order: 5,
     },
@@ -95,6 +100,7 @@
       location: "Harness / immediately before side effects",
       definition: "在写入或执行前检查 workspace 边界、风险与审批，不让 Prompt 成为唯一防线。",
       enters: "工具真正产生副作用之前。",
+      missing: "工具仍可能执行，但写入前没有 Harness 统一边界；任务可以 PASS，执行边界却只能是 UNKNOWN。",
       accent: "rose",
       order: 6,
     },
@@ -108,6 +114,7 @@
       location: "Harness / evidence plane",
       definition: "记录模型请求、工具调用和 Observation，让系统可以事后复核发生了什么。",
       enters: "每次可观察动作发生时；它不改变任务结果，只改变可审计性。",
+      missing: "任务仍可能 PASS，但只留下验收结论，没有可复核的模型与工具过程。",
       accent: "violet",
       order: 7,
     },
@@ -121,6 +128,7 @@
       location: "Evaluation layer / after task run",
       definition: "按任务契约检查最终交付，不让“模型说完成了”自动等于任务通过。",
       enters: "运行结束后，需要形成 PASS / FAIL 结论时。",
+      missing: "动作可能全部完成，但系统无法按契约判 PASS；结果只能停在 UNVERIFIED。",
       accent: "navy",
       order: 8,
     },
@@ -445,20 +453,85 @@
     if (hasTrace) estimatedMs += COST_MODEL.traceFixedMs + events.length * COST_MODEL.traceEventMs;
     if (hasEval) estimatedMs += COST_MODEL.evalMs;
 
-    let narrative;
+    let breakpointNarrative;
     if (!hasRead) {
-      narrative = "模型有任务意图，但没有能改变环境的动作。最小补丁是 read_file；只加 Loop 也不会凭空产生第一次工具调用。";
+      breakpointNarrative = "模型有任务意图，但没有能改变环境的动作。最小补丁是 read_file；只加 Loop 也不会凭空产生第一次工具调用。";
     } else if (!hasLoop) {
-      narrative = "read_file 已经执行，但 Observation 没有回到下一轮。你看到的是“只动了一下”，不是连续任务。";
+      breakpointNarrative = "read_file 已经执行，但 Observation 没有回到下一轮。你看到的是“只动了一下”，不是连续任务。";
     } else if (!hasWrite) {
-      narrative = "Agent 已经知道文件内容，却没有修改能力。此时缺的是 write_file，而不是更多 Prompt。";
+      breakpointNarrative = "Agent 已经知道文件内容，却没有修改能力。此时缺的是 write_file，而不是更多 Prompt。";
     } else if (!hasRun) {
-      narrative = "文件可能已经改动，但没有测试 Observation。“模型说完成”不能替代测试通过。";
+      breakpointNarrative = "文件可能已经改动，但没有测试 Observation。“模型说完成”不能替代测试通过。";
     } else if (!hasEval) {
-      narrative = "三个动作都完成了，但系统没有按任务契约给出验收结论，所以只能算 UNVERIFIED。";
+      breakpointNarrative = "三个动作都完成了，但系统没有按任务契约给出验收结论，所以只能算 UNVERIFIED。";
     } else {
-      narrative = "动作链、执行边界、系统轨迹和任务验收都已接通。继续增加组件前，先问它是否真的解决一个新的失败模式。";
+      breakpointNarrative = "任务通过 Eval 验收：交付动作已经走完，并形成了独立验收结论。";
     }
+
+    const boundaryOutcome = hasGuardrail
+      ? (toolCalls > 0
+        ? {
+          value: "PASS",
+          title: "有边界，也触发了检查",
+          detail: `Guardrail 在 ${toolCalls} 次有副作用动作前完成了检查。`,
+          tone: "good",
+        }
+        : {
+          value: "READY",
+          title: "有边界，但本次未触发",
+          detail: "Guardrail 已装配；本次没有工具调用，因此不能记成一次真实拦截。",
+          tone: "info",
+        })
+      : {
+        value: "UNKNOWN",
+        title: "Harness 层没有执行边界",
+        detail: "没有 Guardrail：本次工具动作没有经过统一的 workspace、风险或审批检查。",
+        tone: "bad",
+      };
+
+    const auditabilityOutcome = hasTrace
+      ? (hasEval
+        ? {
+          value: "FULL",
+          title: "轨迹与验收都在",
+          detail: `Trace 记录了 ${events.length} 个事件，同时存在 Eval 验收结论；可复核证据类型完整。`,
+          tone: "good",
+        }
+        : {
+          value: "TRACE_ONLY",
+          title: "能复盘过程，缺验收",
+          detail: `Trace 记录了 ${events.length} 个事件，但没有 Eval；可审计性只有过程证据。`,
+          tone: "warn",
+        })
+      : {
+        value: "NONE",
+        title: "没有可复核的系统轨迹",
+        detail: "没有 Trace：本次只有页面教学重放，Agent 自己没有留下系统可审计的运行记录。",
+        tone: "bad",
+      };
+
+    const status = statusCopy(taskStatus);
+    const taskOutcome = {
+      value: taskStatus,
+      title: status.label,
+      detail: hasEval
+        ? (allDone
+          ? "Eval 按任务契约确认 3/3 交付检查通过。这个结论只覆盖当前任务。"
+          : `Eval 已运行，但只确认 ${completed}/3 个交付检查；不会把模型自述当作 PASS。`)
+        : (allDone
+          ? "动作都出现了，但没有 Eval；系统不能形成任务 PASS。"
+          : `当前只有 ${completed}/3 个交付检查有证据，且没有 Eval 验收。`),
+      tone: status.tone,
+    };
+
+    const outcomes = [
+      { key: "task", label: "任务验收", eyebrow: "DELIVERY", ...taskOutcome },
+      { key: "boundary", label: "执行边界", eyebrow: "SAFETY", ...boundaryOutcome },
+      { key: "auditability", label: "可审计性", eyebrow: "EVIDENCE", ...auditabilityOutcome },
+    ];
+
+    const governanceSentence = `执行边界 ${boundaryOutcome.value}（${boundaryOutcome.title}）；可审计性 ${auditabilityOutcome.value}（${auditabilityOutcome.title}）。`;
+    const narrative = `${breakpointNarrative} ${governanceSentence}`;
 
     const governanceNotes = [];
     if (!hasRegistry) governanceNotes.push("无 Registry：本次靠固定任务脚本运行，不证明多工具分发的一致性。");
@@ -467,7 +540,6 @@
     if (!hasEval) governanceNotes.push("无 Eval：完成度只能描述动作，不能形成任务 PASS。");
     if (!governanceNotes.length) governanceNotes.push("治理组件齐全，但它们带来额外检查与耗时；是否值得仍要由真实任务和 Eval 决定。");
 
-    const status = statusCopy(taskStatus);
     return {
       task: TASK,
       selection: normalizeSelection(selection),
@@ -493,10 +565,73 @@
       evalStatus: hasEval ? (allDone ? "PASS" : "FAIL") : "OFF",
       evalLabel: hasEval ? (allDone ? "3/3 交付通过" : `${completed}/3 交付通过`) : "未运行验收",
       traceStatus: hasTrace ? "ON" : "OFF",
+      outcomes,
       narrative,
       governanceNotes,
       costModel: COST_MODEL,
     };
+  }
+
+  const LEARNING_ORDER = [
+    "read_file",
+    "loop",
+    "write_file",
+    "run_python",
+    "eval",
+    "guardrail",
+    "trace",
+    "registry",
+  ];
+
+  const RECOMMENDATION_GUIDANCE = {
+    read_file: {
+      reason: "现在只有模型，首个真实动作不会发生；先补一个读取工具，才能看到 Observation。",
+      expected: "任务会从 BLOCKED 变成 INCOMPLETE，并出现 1 次文件读取。",
+    },
+    loop: {
+      reason: "read_file 已经能动作，但 Observation 回不到模型；先补 Loop，才能出现下一轮决策。",
+      expected: "工具结果会写回对话；任务仍会停住，但断点会推进到“缺少写入”。",
+    },
+    write_file: {
+      reason: "模型已经知道当前版本，却没有修改文件的能力；补写入工具，才能完成第二步。",
+      expected: "完成度会从 1/3 变成 2/3，随后暴露“没有测试证据”。",
+    },
+    run_python: {
+      reason: "文件可能已改，但完成声明还没有测试 Observation；补测试工具才能验证交付。",
+      expected: "完成度会到 3/3，但任务仍只是 UNVERIFIED，因为还没有 Eval。",
+    },
+    eval: {
+      reason: "动作全部完成不等于任务可信通过；补 Eval，才能按契约形成独立验收结论。",
+      expected: "任务验收会从 UNVERIFIED 变成 PASS；边界与可审计性仍可能缺失。",
+    },
+    guardrail: {
+      reason: "任务可能已经 PASS，但工具副作用前没有 Harness 边界；补 Guardrail 检验安全声明。",
+      expected: "有工具动作时，执行边界会从 UNKNOWN 变成 PASS；可审计性仍保持 NONE。",
+    },
+    trace: {
+      reason: "现在有任务结论，却没有系统可复核过程；补 Trace，才能区分结果和证据。",
+      expected: "可审计性会从 NONE 变成 FULL（同时已有 Eval），任务结果不应改变。",
+    },
+    registry: {
+      reason: "最后补统一工具契约，观察分发一致性是否提升，而任务能力不因此自动变强。",
+      expected: "Registry 会从手写分发变成 ACTIVE；完成度与验收结论保持不变。",
+    },
+  };
+
+  function recommendNextExperiments(selection) {
+    const current = normalizeSelection(selection);
+    const selected = new Set(current);
+    const componentId = LEARNING_ORDER.find((id) => !selected.has(id));
+    if (!componentId) return [];
+    const component = componentById(componentId);
+    const guidance = RECOMMENDATION_GUIDANCE[componentId];
+    return [{
+      componentId,
+      component,
+      selection: normalizeSelection([...current, componentId]),
+      reason: guidance.reason,
+      expected: guidance.expected,
+    }];
   }
 
   function compareRuns(a, b) {
@@ -505,9 +640,43 @@
     const safetyDelta = SAFETY_RANK[b.safetyStatus] - SAFETY_RANK[a.safetyStatus];
     const evidenceDelta = EVIDENCE_RANK[b.evidenceStatus] - EVIDENCE_RANK[a.evidenceStatus];
     const durationDelta = b.estimatedSeconds - a.estimatedSeconds;
+    const aSelection = new Set(normalizeSelection(a.selection));
+    const bSelection = new Set(normalizeSelection(b.selection));
+    const changedComponents = COMPONENTS
+      .filter((component) => aSelection.has(component.id) !== bSelection.has(component.id))
+      .map((component) => component.id);
+    const addedComponents = COMPONENTS
+      .filter((component) => !aSelection.has(component.id) && bSelection.has(component.id))
+      .map((component) => component.id);
+    const removedComponents = COMPONENTS
+      .filter((component) => aSelection.has(component.id) && !bSelection.has(component.id))
+      .map((component) => component.id);
+    const changedNames = changedComponents.map((id) => componentById(id).name);
+    let mode = "multivariate";
+    if (changedComponents.length === 0) mode = "repeat";
+    else if (changedComponents.length === 1) mode = "controlled";
+    const warning = mode === "multivariate"
+      ? `多变量变化：${changedNames.join("、")} 同时改变，不能把结果差异归因给单一组件。`
+      : null;
+    let summary;
+    if (mode === "repeat") {
+      summary = "重复运行：装配没有变化，确定性模拟会得到相同结果。";
+    } else if (mode === "controlled") {
+      summary = `受控对照：只加入${changedNames[0]}。本次差异可以优先归因于这一块，但仍需结合结果检查。`;
+    } else {
+      summary = warning;
+    }
     return {
       a,
       b,
+      mode,
+      isRepeat: mode === "repeat",
+      isControlled: mode === "controlled",
+      changedComponents,
+      addedComponents,
+      removedComponents,
+      warning,
+      summary,
       metrics: [
         {
           key: "completion",
@@ -577,6 +746,7 @@
     selectedComponents,
     simulateRun,
     compareRuns,
+    recommendNextExperiments,
     formatSeconds,
     costBasisText,
   };
