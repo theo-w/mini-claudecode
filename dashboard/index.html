@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Agent Loop Story · Mini Agent Harness</title>
+  <title>Agent Guided Learning · Mini Agent Harness</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='12' height='17' rx='3' fill='%23147d73'/%3E%3Crect x='17' y='3' width='12' height='26' rx='3' fill='%23db6b4f'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
   <script src="story.js" defer></script>
@@ -13,7 +13,7 @@
 <body>
   <header class="app-header">
     <div class="brand-row">
-      <a class="brand" href="./" aria-label="Agent Anatomy 首页">
+      <a class="brand" href="./" aria-label="Agent Guided Learning 首页">
         <span class="brand-blocks" aria-hidden="true"><i></i><i></i><i></i></span>
         <span><strong>Agent Anatomy</strong><small>Mini Agent Harness</small></span>
       </a>
@@ -21,7 +21,8 @@
     </div>
     <div class="header-row">
       <nav class="view-tabs" role="tablist" aria-label="实验台视图">
-        <button class="view-tab active" id="tab-story" role="tab" aria-selected="true" aria-controls="view-story" data-view="story"><span>01</span>任务故事</button>
+        <button class="view-tab active" id="tab-learn" role="tab" aria-selected="true" aria-controls="view-learn" data-view="learn"><span>00</span>开始学习</button>
+        <button class="view-tab" id="tab-story" role="tab" aria-selected="false" aria-controls="view-story" data-view="story"><span>01</span>任务故事</button>
         <button class="view-tab" id="tab-replay" role="tab" aria-selected="false" aria-controls="view-replay" data-view="replay"><span>02</span>Loop 回放</button>
         <button class="view-tab" id="tab-anatomy" role="tab" aria-selected="false" aria-controls="view-anatomy" data-view="anatomy"><span>03</span>乐高拆解</button>
         <button class="view-tab" id="tab-compare" role="tab" aria-selected="false" aria-controls="view-compare" data-view="compare"><span>04</span>A/B 对比</button>
@@ -48,7 +49,36 @@
     </section>
 
     <div id="dashboard-content" hidden>
-      <section id="view-story" class="view-panel" role="tabpanel" aria-labelledby="tab-story">
+      <section id="view-learn" class="view-panel" role="tabpanel" aria-labelledby="tab-learn">
+        <div class="page-heading learn-heading">
+          <div>
+            <p class="eyebrow">START HERE · GUIDED PATH</p>
+            <h1>先用 5 步看懂一次 Agent 运行</h1>
+            <p>不用先读 Trace。每一屏只回答一个问题：发生了什么、由哪些零件参与、Loop 怎么走、测试怎么判、最后带走什么。</p>
+          </div>
+          <label class="task-picker">本次学习任务<select id="learn-task-select" aria-label="学习任务"></select></label>
+        </div>
+        <div class="learn-orientation">
+          <div><span class="learn-orientation-mark">5</span><strong>一步只学一个概念</strong></div>
+          <p>怎么用：按 01 → 05 顺序点；先读结论，再按需展开零件卡，最后用深挖入口核对原始证据。</p>
+          <span class="soft-chip">真实 Trace · 单次快照 · 只读</span>
+        </div>
+        <nav id="learn-stepper" class="learn-stepper" aria-label="学习步骤">
+          <button class="learn-step active" type="button" data-learn-step="1" aria-current="step"><span>01</span><strong>看结论</strong><small>发生了什么</small></button>
+          <button class="learn-step" type="button" data-learn-step="2"><span>02</span><strong>认零件</strong><small>谁在何时参与</small></button>
+          <button class="learn-step" type="button" data-learn-step="3"><span>03</span><strong>看循环</strong><small>下一步从哪来</small></button>
+          <button class="learn-step" type="button" data-learn-step="4"><span>04</span><strong>懂测试</strong><small>为什么判输赢</small></button>
+          <button class="learn-step" type="button" data-learn-step="5"><span>05</span><strong>做复盘</strong><small>带走什么</small></button>
+        </nav>
+        <div id="learn-content" class="learn-content" aria-live="polite"></div>
+        <nav class="learn-pager" aria-label="学习步骤翻页">
+          <button id="learn-prev" class="learn-pager-button" type="button">← 上一步</button>
+          <span id="learn-step-status" class="learn-step-status">第 1 / 5 步 · 看结论</span>
+          <button id="learn-next" class="learn-pager-button primary" type="button">下一步：认零件 →</button>
+        </nav>
+      </section>
+
+      <section id="view-story" class="view-panel" role="tabpanel" aria-labelledby="tab-story" hidden>
         <div class="page-heading story-heading">
           <div>
             <p class="eyebrow">AGENT MECHANISM LAB</p>

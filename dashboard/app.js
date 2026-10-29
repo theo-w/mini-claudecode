@@ -4,7 +4,8 @@ const Story = globalThis.AgentStory;
 
 const state = {
   data: null,
-  view: "story",
+  view: "learn",
+  learnStep: 1,
   runId: null,
   taskId: null,
   eventIndex: 0,
@@ -13,6 +14,14 @@ const state = {
   playing: false,
   timer: null,
 };
+
+const LEARN_STEPS = [
+  { number: 1, title: "看结论", question: "这次运行发生了什么？" },
+  { number: 2, title: "认零件", question: "哪些组件参与，分别在何时、何处？" },
+  { number: 3, title: "看循环", question: "Observation 怎样进入下一步？" },
+  { number: 4, title: "懂测试", question: "这些测试为什么这样判？" },
+  { number: 5, title: "做复盘", question: "这次运行能带走什么结论？" },
+];
 
 const $ = (id) => document.getElementById(id);
 const EVENT_LABELS = {
@@ -61,10 +70,17 @@ const MODULE_STYLE = {
 };
 const RISK_LABELS = { read: "只读", write: "写入 · 需审批", execute: "执行 · 需审批" };
 
-function h(tag, className, text) {
+function h(tag, className, ...content) {
   const element = document.createElement(tag);
   if (className) element.className = className;
-  if (text !== undefined && text !== null) element.textContent = String(text);
+  content.flat().forEach((part) => {
+    if (part === undefined || part === null || part === false) return;
+    if (part instanceof Node) {
+      element.append(part);
+    } else {
+      element.append(document.createTextNode(String(part)));
+    }
+  });
   return element;
 }
 
@@ -191,8 +207,15 @@ function fillTaskSelect(select, run, selected) {
 function syncTaskSelects() {
   const run = currentRun();
   const record = currentRecord();
+  fillTaskSelect($("learn-task-select"), run, record?.id);
   fillTaskSelect($("story-task-select"), run, record?.id);
   fillTaskSelect($("task-select"), run, record?.id);
+}
+
+function preferredRecord(run) {
+  return run?.records.find((record) => normalizedStatus(record.passed, record.status) === "FAIL")
+    || run?.records[0]
+    || null;
 }
 
 function switchView(view) {
@@ -213,6 +236,7 @@ function switchView(view) {
 
 function renderView(view) {
   if (!state.data || !Story) return;
+  if (view === "learn") renderLearn();
   if (view === "story") renderStory();
   if (view === "replay") renderReplay();
   if (view === "anatomy") renderAnatomy();
@@ -222,6 +246,7 @@ function renderView(view) {
 function renderAll() {
   fillRunSelect($("global-run-select"), state.runId);
   syncTaskSelects();
+  renderLearn();
   renderStory();
   renderReplay();
   renderAnatomy();
@@ -894,6 +919,1097 @@ function renderCheckGroups(element, groups) {
     section.append(list);
     root.append(section);
   });
+}
+
+
+function learnGroup(summary, id) {
+  return summary.groups.find((group) => group.id === id) || {
+    id,
+    title: id,
+    subtitle: "未记录",
+    description: "这一类检查没有出现在当前报告中。",
+    checks: [],
+    summary: { PASS: 0, FAIL: 0, SKIP: 0, UNKNOWN: 0, total: 0 },
+  };
+}
+
+function learnGroupCounts(group) {
+  const order = ["PASS", "FAIL", "SKIP", "UNKNOWN"];
+  const parts = order
+    .filter((status) => group.summary[status] > 0)
+    .map((status) => `${status} ${group.summary[status]}`);
+  return parts.length ? parts.join(" · ") : "没有 checks";
+}
+
+function learnGroupVerdict(group) {
+  if (!group.summary.total) return "未记录";
+  if (group.summary.FAIL) return `${group.summary.FAIL} 项失败`;
+  if (group.summary.UNKNOWN) return `${group.summary.UNKNOWN} 项证据不足`;
+  if (group.summary.SKIP) return `${group.summary.SKIP} 项未验证`;
+  return `${group.summary.PASS} 项通过`;
+}
+
+function learnContext(record) {
+  const contract = state.data.task_contracts?.[record.id] || null;
+  const summary = Story.summarizeExperiment(record, contract);
+  const grouped = Story.groupRounds(record);
+  const path = Story.toolPath(record);
+  const gap = Story.continuationGap(record);
+  return { contract, summary, grouped, path, gap };
+}
+
+function learnJumpButton(record, label, sequence, className = "learn-inline-action") {
+  const button = h("button", className, label);
+  button.type = "button";
+  button.addEventListener("click", () => jumpToSequence(state.runId, record.id, sequence));
+  return button;
+}
+
+function learnMetric(label, value, note = "") {
+  const item = h("div", "learn-metric");
+  add(item, h("span", "", label), h("strong", "", value));
+  if (note) item.append(h("small", "", note));
+  return item;
+}
+
+function learnAnswerCard(number, label, title, body, tone = "") {
+  const card = h("article", `learn-answer-card ${tone}`.trim());
+  add(card, h("span", "learn-answer-number", number), h("p", "eyebrow", label), h("h3", "", title), h("p", "", body));
+  return card;
+}
+
+function returnedRanges(record) {
+  const ranges = [];
+  Story.groupRounds(record).rounds.forEach((round) => {
+    round.calls.forEach(({ result }) => {
+      if (!result) return;
+      const metadata = Story.parseObservationMetadata(result);
+      if (metadata.returned_range && !ranges.includes(metadata.returned_range)) ranges.push(metadata.returned_range);
+    });
+  });
+  return ranges;
+}
+
+function traceLearningFact(record, context) {
+  const { path, gap, grouped } = context;
+  if (!path.totalCalls) {
+    return "Trace 中没有记录到工具调用；因此不能从这份报告证明工具路径已经走通。";
+  }
+  const ranges = returnedRanges(record);
+  const rangesText = ranges.length
+    ? `工具返回范围 ${ranges.map((item) => item.replace("-", "–")).join("、")}`
+    : "工具结果没有记录读取范围";
+  const fixtureLines = context.summary.fixture.totalLineCount;
+  const fileText = fixtureLines !== null ? `，文件共 ${fixtureLines} 行` : "";
+  if (gap) {
+    return `Trace 记录 ${path.totalCalls} 次工具调用；${rangesText}${fileText}。Observation 给出 next_start_line=${gap.nextStartLine}，但 S${gap.nextStep} 的 model_response 中 tool_calls=[]，Loop 进入停止分支。`;
+  }
+  const finish = grouped.finalResponse ? "最后一条 model_response 不含 tool_calls，Loop 停止。" : "报告没有记录明确的停止响应。";
+  return `Trace 记录 ${path.totalCalls} 次工具调用；${rangesText}${fileText}。${finish}`;
+}
+
+function maxReturnedLine(record) {
+  let maxLine = null;
+  Story.groupRounds(record).rounds.forEach((round) => {
+    round.calls.forEach(({ result }) => {
+      if (!result) return;
+      const metadata = Story.parseObservationMetadata(result);
+      const match = String(metadata.returned_range || "").match(/(\d+)\s*-\s*(\d+)/);
+      if (match) maxLine = Math.max(maxLine ?? 0, Number(match[2]));
+    });
+  });
+  return maxLine;
+}
+
+function finalResponseForStep(grouped, step) {
+  const round = grouped.rounds.find((item) => item.step === step);
+  return round?.responses[round.responses.length - 1] || null;
+}
+
+function renderLearnConclusion(record, context) {
+  const { summary, path, gap, grouped } = context;
+  const acceptance = learnGroup(summary, "acceptance");
+  const constraint = learnGroup(summary, "constraint");
+  const capability = learnGroup(summary, "capability");
+  const integrity = learnGroup(summary, "integrity");
+  const done = summary.outcome === "PASS";
+  const task = summary.question || "任务契约未记录：只能展示 Trace 和 checks，不能补写任务要求。";
+  const ranges = returnedRanges(record);
+  const rangeText = ranges.length ? `${ranges.map((item) => item.replace("-", "–")).join("、")} 行` : "工具读取范围未记录";
+  const fileLines = summary.fixture.totalLineCount;
+  const readEnd = maxReturnedLine(record);
+  const failedAcceptance = acceptance.checks.filter((check) => check.status === "FAIL");
+  const headline = gap && readEnd !== null
+    ? `它读到第 ${readEnd} 行就停了，验收因此没有完成`
+    : (done ? "这次通过了，但还要分清“已验证”和“未验证”" : "任务没有通过，先定位最后一次动作和最终裁判");
+  const lead = gap
+    ? `Agent 读取了 ${rangeText}${fileLines !== null ? `（文件共 ${fileLines} 行）` : ""}。工具已经返回 next_start_line=${gap.nextStartLine}，但 S${gap.nextStep} 没有继续调用工具，Loop 进入停止。最终验收 ${acceptance.summary.PASS}/${acceptance.summary.total} 通过，整体 ${summary.outcome}。`
+    : (done
+      ? `任务最终判定为 PASS。接下来仍要检查：哪些能力被真实证据支持，哪些测试只是 SKIP，没有被验证。`
+      : `Trace 记录 ${path.totalCalls} 次工具调用，最终验收 ${acceptance.summary.PASS}/${acceptance.summary.total} 通过，整体 ${summary.outcome}。不要用 Token 或调用次数替代最终裁判。`);
+  const targetResponse = gap ? finalResponseForStep(grouped, gap.nextStep) : grouped.finalResponse;
+  const traceSequence = targetResponse?.sequence ?? groupedFirstSequence(grouped);
+
+  const root = h("section", "learn-step-panel learn-conclusion");
+  const hero = h("article", `learn-conclusion-hero outcome-${summary.outcome.toLowerCase()}`);
+  add(hero,
+    h("p", "eyebrow", "STEP 01 · 先用四句话复述"),
+    h("div", "learn-conclusion-top",
+      statusBadge(record.passed, record.status),
+      h("span", "learn-task-id", record.id),
+      h("span", "learn-run-id", `run · ${currentRun()?.label || state.runId}`)),
+    h("h2", "", headline),
+    h("p", "learn-conclusion-lead", lead));
+  hero.append(learnJumpButton(record, gap ? `在 Trace 中定位 S${gap.nextStep} 断点 →` : "直接打开真实 Trace →", traceSequence, "learn-primary-action"));
+  root.append(hero);
+
+  const story = h("ol", "learn-story-track");
+  const processText = gap
+    ? `Trace 记录 ${path.totalCalls} 次工具调用，读取了 ${rangeText}${fileLines !== null ? `，文件共 ${fileLines} 行` : ""}。Observation 已经把续读位置写成 next_start_line=${gap.nextStartLine}。`
+    : `Trace 记录 ${path.totalCalls} 次工具调用，读取范围为 ${rangeText}。${grouped.finalResponse ? "最后一条 model_response 不含 tool_calls，Loop 停止。" : "没有记录明确的停止响应。"}`;
+  const stopText = gap
+    ? `S${gap.nextStep} 的 model_response 为 tool_calls=[]。Loop 把它当作 finish，而不是“任务已经完成”。`
+    : (done ? "Loop 正常结束；任务是否通过由 Loop 外的 Eval 判定。" : "先回到 Trace 找最后一次模型响应和它之前的一步，确认 Loop 是怎样退出的。");
+  const failedText = failedAcceptance.length
+    ? failedAcceptance.map((check) => check.label).join("；")
+    : "没有 FAIL 验收项";
+  const judgeText = `运行结束后，Eval 检查最终答案：最终验收 ${acceptance.summary.PASS}/${acceptance.summary.total} 通过，整体 ${summary.outcome}。本次失败证据：${failedText}。`;
+  [
+    ["任务", "它被要求做什么？", task],
+    ["过程", "Agent 实际做了什么？", processText],
+    ["断点", "Loop 为什么停在这里？", stopText],
+    ["裁判", "为什么最终是这个结果？", judgeText],
+  ].forEach(([label, title, body], index) => {
+    const item = h("li", `learn-story-item story-${index + 1}`);
+    add(item,
+      h("span", "learn-story-index", String(index + 1).padStart(2, "0")),
+      h("div", "learn-story-copy", h("p", "eyebrow", label), h("h3", "", title), h("p", "", body)));
+    story.append(item);
+  });
+  root.append(story);
+
+  const boundary = h("aside", "learn-boundary-note");
+  add(boundary,
+    h("strong", "", "这里只读“可观察事实”"),
+    h("p", "", gap
+      ? "Trace 能证明：续读线索出现后，下一轮没有再次调用工具。Trace 不能证明：模型内部为什么停止。"
+      : "Trace 能证明出现了哪些响应、调用和结果；它不能直接证明模型内部动机，也不能替代运行后的 checks。"));
+  root.append(boundary);
+
+  const drawer = h("details", "learn-evidence-drawer");
+  const drawerSummary = h("summary", "");
+  add(drawerSummary,
+    h("span", "", "可选：查看这次判定的四类证据"),
+    h("small", "", `${summary.counts.PASS + summary.counts.FAIL + summary.counts.SKIP + summary.counts.UNKNOWN} 项 checks · 默认折叠`));
+  drawer.append(drawerSummary);
+  const drawerBody = h("div", "learn-evidence-body");
+  const questions = new Map([
+    ["acceptance", "答案交付了吗？"],
+    ["constraint", "过程走对了吗？"],
+    ["capability", "能力真发生了吗？"],
+    ["integrity", "实验条件真的覆盖了吗？"],
+  ]);
+  [acceptance, constraint, capability, integrity].forEach((group) => {
+    const row = h("div", `learn-evidence-row group-${group.id}`);
+    add(row,
+      h("div", "", h("strong", "", group.title), h("p", "", questions.get(group.id) || group.subtitle)),
+      h("strong", `learn-evidence-verdict ${group.summary.FAIL ? "is-fail" : ""}`, learnGroupVerdict(group)),
+      h("code", "", learnGroupCounts(group)));
+    drawerBody.append(row);
+  });
+  if (capability.summary.PASS && acceptance.summary.FAIL) {
+    const insight = h("aside", "learn-insight");
+    add(insight,
+      h("span", "learn-insight-mark", "≠"),
+      h("div", "",
+        h("strong", "", "工具能力 PASS ≠ 任务交付 PASS"),
+        h("p", "", `本次有 ${capability.summary.PASS} 项能力证据通过，说明 ${path.usedTools.join(" + ") || "工具"} 的真实调用留下了记录；但最终验收仍有 ${acceptance.summary.FAIL} 项失败，答案没有交付完整结果。`)));
+    drawerBody.append(insight);
+  }
+  drawer.append(drawerBody);
+  root.append(drawer);
+
+  const footer = h("div", "learn-step-takeaway");
+  add(footer,
+    h("span", "learn-step-takeaway-label", "先记住"),
+    h("p", "", "读一次运行先按“任务 → 过程 → 断点 → 裁判”复述。Token、工具次数和最终结果不是同一个问题。"));
+  root.append(footer);
+  return root;
+}
+
+function groupedFirstSequence(grouped) {
+  return grouped.rounds[0]?.responses[0]?.sequence ?? grouped.rounds[0]?.events[0]?.sequence ?? 0;
+}
+
+function moduleById(id) {
+  return state.data?.catalog?.modules?.find((module) => module.id === id) || null;
+}
+
+function componentCard(component) {
+  const card = h("article", `learn-component-card component-${component.id} ${component.tone || ""}`.trim());
+  card.dataset.component = component.id;
+  const top = h("div", "learn-component-top");
+  add(top,
+    h("span", "learn-component-icon", component.icon),
+    h("div", "", h("h3", "", component.title), h("p", "", component.kind)),
+    h("span", `learn-component-state ${component.tone || "catalog"}`, component.stateLabel));
+  card.append(top);
+  const facts = h("dl", "learn-component-facts");
+  [
+    ["作用", component.purpose],
+    ["时机", component.when],
+    ["位置", component.where],
+    ["本次状态", component.state],
+  ].forEach(([label, value]) => {
+    const row = h("div", "learn-component-fact");
+    add(row, h("dt", "", label), h("dd", "", value));
+    facts.append(row);
+  });
+  card.append(facts);
+  if (component.source) {
+    const source = h("div", "learn-component-source");
+    add(source, h("span", "", "源码"), sourceLink(component.source));
+    card.append(source);
+  }
+  if (component.extra) card.append(component.extra);
+  return card;
+}
+
+function learnLane(title, subtitle, components) {
+  const lane = h("section", "learn-component-lane");
+  const head = h("header", "learn-lane-head");
+  add(head, h("div", "", h("p", "eyebrow", "LEGO LANE"), h("h3", "", title)), h("p", "", subtitle));
+  lane.append(head);
+  const grid = h("div", "learn-component-grid");
+  components.forEach((component) => grid.append(componentCard(component)));
+  lane.append(grid);
+  return lane;
+}
+
+function compactModule(module, fallback) {
+  return module || {
+    id: fallback,
+    name: fallback,
+    summary: "模块目录未记录这个组件，无法确认其职责。",
+    source: null,
+  };
+}
+
+function assemblyCard(component) {
+  const card = h("details", `assembly-card tone-${component.tone || "harness"} state-${component.stateTone || "used"}`);
+  card.dataset.component = component.id;
+  const summary = h("summary", "assembly-card-summary");
+  add(summary,
+    h("span", "assembly-card-icon", component.icon),
+    h("div", "assembly-card-title", h("strong", "", component.title), h("small", "", component.kind)),
+    h("span", `assembly-card-state state-${component.stateTone || "used"}`, component.stateLabel),
+    h("span", "assembly-card-chevron", "＋"));
+  card.append(summary);
+
+  const body = h("div", "assembly-card-body");
+  [
+    ["它解决什么", component.purpose],
+    ["何时进入", component.when],
+    ["装在哪里", component.where],
+    ["本次发生", component.state],
+  ].forEach(([label, value]) => {
+    const fact = h("div", "assembly-fact");
+    add(fact, h("dt", "", label), h("dd", "", value));
+    body.append(fact);
+  });
+  if (component.extra) body.append(component.extra);
+  if (component.source) {
+    const source = h("div", "assembly-source");
+    add(source, h("span", "", "源码入口"), sourceLink(component.source));
+    body.append(source);
+  }
+  card.append(body);
+  return card;
+}
+
+function assemblyConnector(label = "→") {
+  return h("span", "assembly-connector", label);
+}
+
+function renderLearnComponents(record, context) {
+  const { summary, grouped, path } = context;
+  const run = currentRun();
+  const events = record.events || [];
+  const requests = grouped.rounds.flatMap((round) => round.requests);
+  const responses = grouped.rounds.flatMap((round) => round.responses);
+  const results = grouped.rounds.flatMap((round) => round.toolResults);
+  const approvals = grouped.rounds.flatMap((round) => round.approvals);
+  const compactions = grouped.rounds.flatMap((round) => round.compactions);
+  const usedTools = path.usedTools
+    .map((name) => state.data.catalog.tools.find((tool) => tool.name === name))
+    .filter(Boolean);
+  const runStarted = events.find((event) => event.event === "run_started") || null;
+  const snapshot = record.context || {};
+  const fixtures = summary.fixture.fixtures || [];
+  const fixtureLabel = fixtures.length
+    ? fixtures.map((fixture) => `${fixture.path}${fixture.lineCount !== null ? ` · ${fixture.lineCount} 行` : ""}`).join("、")
+    : "fixture 未记录";
+  const toolCounts = recordToolCounts(record);
+  const toolNames = usedTools.map((tool) => tool.name).join(" + ") || "未使用工具";
+  const toolSource = usedTools[0]?.source || moduleById("tools")?.source;
+  const registrySource = usedTools[0]?.registry_source || moduleById("tools")?.source;
+  const modules = ["context", "model", "loop", "tools", "approval", "compaction", "trace", "eval"].reduce((map, id) => {
+    map[id] = compactModule(moduleById(id), id);
+    return map;
+  }, {});
+  const finalResponse = grouped.finalResponse;
+  const finishRound = [...grouped.rounds].reverse().find((round) => round.branch.type === "finish");
+  const successResults = results.filter((result) => result.ok !== false).length;
+  const failedResults = results.filter((result) => result.ok === false).length;
+  const compactionTriggered = compactions.some((event) => event.compacted);
+
+  const toolWiring = h("div", "assembly-tool-wiring");
+  add(toolWiring, h("span", "assembly-wire-label", "调用方式"));
+  toolWiring.append(h("code", "", usedTools[0]?.architecture || "model tool_calls → Agent Loop → Approval? → ToolRegistry → handler → observation"));
+  if (usedTools.length) {
+    usedTools.forEach((tool) => {
+      const toolRow = h("div", "assembly-used-tool");
+      add(toolRow,
+        h("strong", "", `${tool.name} ×${toolCounts[tool.name] || 0}`),
+        h("span", "", `${tool.risk === "read" ? "只读" : tool.risk === "write" ? "写入" : "执行"} · ${tool.requires_approval ? "需审批" : "无需审批"}`),
+        h("p", "", tool.description || "工具描述未记录"));
+      if (tool.registry_source) {
+        add(toolRow,
+          h("span", "assembly-wire-label", "registry"),
+          sourceLink(tool.registry_source),
+          h("span", "assembly-wire-label", "handler"),
+          sourceLink(tool.source));
+      }
+      toolWiring.append(toolRow);
+    });
+  } else {
+    toolWiring.append(h("p", "assembly-empty", "这次 Trace 没有真实的 tool_call，因此工具插槽没有执行。"));
+  }
+
+  const approvalState = approvals.length
+    ? `记录 ${approvals.length} 个审批或参数拒绝事件；${approvals.map((event) => Story.observationSummary(event)).join(" ")}`
+    : (usedTools.length && usedTools.every((tool) => tool.requires_approval === false)
+      ? `未触发。本次 ${usedTools.map((tool) => tool.name).join(" + ")} 在 registry 中标记为只读、无需审批。`
+      : "Trace 没有 approval 记录；这不等于证明审批发生过或没有发生。");
+
+  const taskCard = {
+    id: "task",
+    icon: "P",
+    title: "Task Prompt + Fixture",
+    kind: "主轨起点 · 任务输入",
+    tone: "input",
+    stateTone: "used",
+    stateLabel: "本次已加载",
+    purpose: "把目标、允许/禁止的工具、固定文件和验收条件交给 Agent。它决定这次实验到底在测什么。",
+    when: "运行开始前，只加载一次",
+    where: `任务契约 data.json · ${fixtureLabel}`,
+    state: summary.hasContract
+      ? `任务正文已记录；固定文件 ${fixtureLabel}。最终验收会检查答案是否满足这份契约。`
+      : "任务契约未记录；页面不会补写目标或评分标准。",
+    source: null,
+  };
+
+  const contextCard = {
+    id: "context",
+    icon: "C",
+    title: modules.context.name,
+    kind: "主轨 · 请求前快照",
+    tone: "harness",
+    stateTone: "used",
+    stateLabel: `${requests.length} 次快照`,
+    purpose: "记录这一轮模型实际看到多少消息、字符和工具 Observation。它是上下文仪表，不是模型本身。",
+    when: "每次 model_request 前组装并记录",
+    where: modules.context.source ? `${modules.context.source.path}:${modules.context.source.line || "?"}` : "源码位置未记录",
+    state: `${requests.length} 次请求；峰值 ${formatNumber(snapshot.peak_context_chars)} 字符、${formatNumber(snapshot.peak_prompt_tokens)} prompt tokens。字符指标不等于 Token。`,
+    source: modules.context.source,
+  };
+
+  const modelCard = {
+    id: "model",
+    icon: "M",
+    title: modules.model.name,
+    kind: "主轨 · 模型判断",
+    tone: "model",
+    stateTone: "used",
+    stateLabel: `${responses.length} 次响应`,
+    purpose: "读取消息和工具 Schema，返回文本或结构化 tool_calls。模型提出“下一步做什么”，但不亲自执行工具。",
+    when: "每一轮决策时",
+    where: modules.model.source ? `${modules.model.source.path}:${modules.model.source.line || "?"}` : "源码位置未记录",
+    state: `${run?.model || "模型未记录"} 返回 ${responses.length} 次响应；是否请求工具，以 response.tool_calls 的结构为准。`,
+    source: modules.model.source,
+  };
+
+  const loopCard = {
+    id: "loop",
+    icon: "L",
+    title: modules.loop.name,
+    kind: "主轨控制器 · 循环",
+    tone: "harness",
+    stateTone: "used",
+    stateLabel: `${grouped.rounds.length} 轮`,
+    purpose: "把模型响应、工具执行、Observation 回写和停止条件串成循环。它执行 Harness 规则，不替模型生成答案。",
+    when: "整个运行期间持续控制每一轮",
+    where: modules.loop.source ? `${modules.loop.source.path}:${modules.loop.source.line || "?"}` : "源码位置未记录",
+    state: `${grouped.rounds.filter((round) => round.branch.type === "tool").length} 个工具分支、${grouped.rounds.filter((round) => round.branch.type === "finish").length} 个停止分支；共 ${grouped.rounds.length} 轮。`,
+    source: modules.loop.source,
+  };
+
+  const finishCard = {
+    id: "finish",
+    icon: "F",
+    title: "Finish / Stop",
+    kind: "主轨出口 · 停止分支",
+    tone: "finish",
+    stateTone: "used",
+    stateLabel: finishRound ? `S${finishRound.step} 停止` : "停止点未记录",
+    purpose: "当 model_response 没有 tool_calls，或达到步数/异常边界时退出 Loop。停止只代表流程结束，不代表任务通过。",
+    when: "模型不再请求工具时；或触发 max_steps / error",
+    where: modules.loop.source ? `由 ${modules.loop.source.path}:${modules.loop.source.line || "?"} 控制` : "Loop 源码位置未记录",
+    state: finishRound
+      ? `S${finishRound.step} 的 model_response 为 tool_calls=[]，Loop 进入 finish；最终结果由运行后的 Eval 另行判定。`
+      : "当前 Trace 没有记录明确的 finish 分支。",
+    source: null,
+  };
+
+  const toolCard = {
+    id: "tool-registry",
+    icon: "T",
+    title: `Tool Registry · ${toolNames}`,
+    kind: "条件插件 · 工具能力",
+    tone: "tool",
+    stateTone: usedTools.length ? "used" : "idle",
+    stateLabel: usedTools.length ? `调用 ${path.totalCalls} 次` : "本次未触发",
+    purpose: "把模型提出的 tool_call 变成受参数校验的实际执行，再把结果作为 Observation 写回消息历史。",
+    when: "model_response 含有 tool_calls 时，在下一轮模型请求之前",
+    where: registrySource
+      ? `registry ${registrySource.path}:${registrySource.line || "?"} · handler ${toolSource ? `${toolSource.path}:${toolSource.line || "?"}` : "未记录"}`
+      : "registry 位置未记录",
+    state: usedTools.length
+      ? `${toolNames} 实际执行 ${path.totalCalls} 次；${results.length} 个 tool_result（${successResults} 成功 / ${failedResults} 失败）。`
+      : "当前任务没有调用任何工具。",
+    extra: toolWiring,
+    source: null,
+  };
+
+  const approvalCard = {
+    id: "approval",
+    icon: "A",
+    title: modules.approval.name,
+    kind: "条件插件 · 安全闸门",
+    tone: "guardrail",
+    stateTone: approvals.length ? "used" : "idle",
+    stateLabel: approvals.length ? "本次触发" : "本次未触发",
+    purpose: "在写入或执行型工具真正执行前检查 Harness 策略。审批是策略闸门，不等同于系统隔离。",
+    when: "工具需要审批时，位于 Loop 与 Tool handler 之间",
+    where: modules.approval.source ? `${modules.approval.source.path}:${modules.approval.source.line || "?"}` : "源码位置未记录",
+    state: approvalState,
+    source: modules.approval.source,
+  };
+
+  const compactionCard = {
+    id: "compaction",
+    icon: "H",
+    title: modules.compaction.name,
+    kind: "条件插件 · 上下文改写",
+    tone: "state",
+    stateTone: compactionTriggered ? "used" : "idle",
+    stateLabel: compactionTriggered ? "本次已压缩" : "本次未触发",
+    purpose: "当上下文达到阈值时，在下一轮模型请求前压缩旧历史，同时尽量保留任务证据。",
+    when: "每轮请求前检查；达到配置阈值才改写上下文",
+    where: modules.compaction.source ? `${modules.compaction.source.path}:${modules.compaction.source.line || "?"}` : "源码位置未记录",
+    state: runStarted?.compaction_strategy === "off"
+      ? `策略 off；记录 ${compactions.length} 个 history_compaction 检查事件，本次没有改写上下文。`
+      : `策略 ${runStarted?.compaction_strategy || "未记录"}；记录 ${compactions.length} 个历史压缩事件。`,
+    source: modules.compaction.source,
+  };
+
+  const traceCard = {
+    id: "trace",
+    icon: "E",
+    title: modules.trace.name,
+    kind: "旁路证据 · 运行记录仪",
+    tone: "evidence",
+    stateTone: "evidence",
+    stateLabel: `${events.length} 条事件`,
+    purpose: "在事件发生时如实记录模型响应、工具调用、Observation 和结束状态。它不参与决策。",
+    when: "事件发生时持续记录，运行结束后仍可回放",
+    where: modules.trace.source ? `${modules.trace.source.path}:${modules.trace.source.line || "?"}` : "源码位置未记录",
+    state: `当前任务有 ${events.length} 条结构化事件，是 Story、Replay 和本页展示的共同证据源。`,
+    source: modules.trace.source,
+  };
+
+  const totalChecks = summary.counts.PASS + summary.counts.FAIL + summary.counts.SKIP + summary.counts.UNKNOWN;
+  const evalCard = {
+    id: "eval",
+    icon: "V",
+    title: modules.eval.name,
+    kind: "旁路证据 · Loop 外裁判",
+    tone: "evidence",
+    stateTone: "evidence",
+    stateLabel: `${totalChecks} 项 checks`,
+    purpose: "运行结束后检查最终答案和 Trace，回答任务是否交付、过程是否合规、能力是否发生、实验是否完整。",
+    when: "任务结束后；不进入模型的上下文，也不影响 Loop 选择",
+    where: modules.eval.source ? `${modules.eval.source.path}:${modules.eval.source.line || "?"}` : "源码位置未记录",
+    state: `PASS ${summary.counts.PASS} / FAIL ${summary.counts.FAIL} / SKIP ${summary.counts.SKIP} / UNKNOWN ${summary.counts.UNKNOWN}；整体 ${summary.outcome}。`,
+    source: modules.eval.source,
+  };
+
+  const root = h("section", "learn-step-panel learn-components");
+  const intro = h("div", "learn-step-heading");
+  add(intro,
+    h("div", "", h("p", "eyebrow", "STEP 02 · 认零件"), h("h2", "", "先看主轨，再把条件插件和裁判逐个装上")),
+    h("p", "", "卡片默认收起。先读名称与本次状态，想知道“它做什么、何时进入、装在哪里”时再点开。"));
+  root.append(intro);
+
+  const board = h("section", "learn-assembly-board");
+  const legend = h("div", "assembly-legend");
+  [
+    ["model", "模型判断"],
+    ["harness", "Harness 控制"],
+    ["tool", "工具能力"],
+    ["evidence", "外部证据"],
+    ["idle", "本次未触发"],
+  ].forEach(([tone, label]) => legend.append(h("span", `assembly-legend-item legend-${tone}`, label)));
+  board.append(legend);
+
+  board.append(h("div", "assembly-section-label", "主轨 · 每次运行都会经过"));
+  const mainTrack = h("div", "assembly-main");
+  [taskCard, contextCard, modelCard, loopCard, finishCard].forEach((component, index) => {
+    if (index) mainTrack.append(assemblyConnector());
+    mainTrack.append(assemblyCard(component));
+  });
+  board.append(mainTrack);
+  board.append(h("div", "assembly-return-note",
+    h("span", "", "↺"),
+    h("p", "", "如果模型返回 tool_calls：进入工具插件，执行结果作为 Observation 写回历史，然后开始下一轮 Model。没有 tool_calls：走向 Finish。")));
+
+  board.append(h("div", "assembly-section-label", "条件插件 · 只有满足条件才进入"));
+  const conditionGrid = h("div", "assembly-condition-grid");
+  conditionGrid.append(assemblyCard(toolCard), assemblyCard(approvalCard), assemblyCard(compactionCard));
+  board.append(conditionGrid);
+
+  board.append(h("div", "assembly-section-label", "旁路证据 · 不替 Agent 做决定"));
+  const evidenceGrid = h("div", "assembly-evidence-grid");
+  evidenceGrid.append(assemblyCard(traceCard), assemblyCard(evalCard));
+  board.append(evidenceGrid);
+  root.append(board);
+
+  const boundary = h("aside", "learn-boundary-note");
+  add(boundary,
+    h("strong", "", "判断“是否参与”，看触发和状态"),
+    h("p", "", "组件出现在目录里，只说明它可用；只有 Trace 记录了调用、Observation、审批或压缩事件，才能说它本次真的进入了路径。"));
+  root.append(boundary);
+  return root;
+}
+
+function responseForRound(round) {
+  return round.responses[round.responses.length - 1] || null;
+}
+
+function renderLearnObservation(record, entry) {
+  const observation = h("div", "learn-loop-node observation");
+  const result = entry.result;
+  add(observation, h("span", "learn-loop-node-kind", "OBSERVATION"), h("h4", "", result ? (result.ok === false ? "工具返回失败" : "Observation 写回") : "没有关联 Observation"));
+  observation.append(h("p", "", result ? Story.observationSummary(result) : "只有 tool_call，没有找到配对的 tool_result。"));
+  if (result) {
+    const meta = Story.parseObservationMetadata(result);
+    if (meta.next_start_line !== null || meta.file_has_more !== null) {
+      const fields = h("div", "learn-observation-fields");
+      if (meta.returned_range) fields.append(h("code", "", `returned_range=${meta.returned_range}`));
+      if (meta.has_more !== null) fields.append(h("code", "", `has_more=${meta.has_more}`));
+      if (meta.file_has_more !== null) fields.append(h("code", "", `file_has_more=${meta.file_has_more}`));
+      if (meta.next_start_line !== null) fields.append(h("code", "", `next_start_line=${meta.next_start_line}`));
+      observation.append(fields);
+    }
+    observation.append(learnJumpButton(record, `定位 S${result.step ?? "?"} tool_result`, result.sequence));
+  }
+  return observation;
+}
+
+function renderLearnLoop(record, context) {
+  const { grouped, gap } = context;
+  const root = h("section", "learn-step-panel learn-loop");
+  const intro = h("div", "learn-step-heading");
+  add(intro,
+    h("div", "", h("p", "eyebrow", "STEP 03 · 看循环"), h("h2", "", "先看这三轮做了什么，再展开原始 Trace")),
+    h("p", "", "一句话规则：有 tool_calls 就执行工具，并把 Observation 写回下一轮；tool_calls=[] 就退出 Loop。规则本身不负责判断任务有没有完成。"));
+  root.append(intro);
+
+  const rule = h("div", "learn-loop-rule");
+  add(rule,
+    h("span", "", "IF"),
+    h("strong", "", "tool_calls 非空 → 工具 → Observation → 下一轮"),
+    h("span", "", "ELSE"),
+    h("strong", "", "tool_calls=[] → finish，交给 Eval 判结果"));
+  root.append(rule);
+
+  const visibleRounds = grouped.rounds;
+  const summaryCallout = h("aside", `loop-summary-callout ${gap ? "is-gap" : ""}`.trim());
+  add(summaryCallout,
+    h("span", "loop-summary-callout-label", gap ? "这次的真实断点" : "这次的真实路径"),
+    h("strong", "", gap
+      ? `S${gap.fromStep} 已经拿到第 ${gap.nextStartLine} 行的续读线索，S${gap.nextStep} 却没有继续请求工具。`
+      : `本次共 ${visibleRounds.length} 轮；每一轮都由 model_response 的 tool_calls 决定走向。`),
+    h("p", "", gap
+      ? `工具返回 ${gap.returnedRange.replace("-", "–")} 行，file_has_more=true。下一轮 tool_calls=[]，Loop 进入 finish；最终答案随后由 Eval 判为 ${context.summary.outcome}。`
+      : "这里只描述 Trace 中出现的动作和字段。动作后的任务结果，要等运行结束后的 checks 才成立。"));
+  root.append(summaryCallout);
+
+  const board = h("section", "loop-summary-board");
+  const boardHead = h("header", "loop-summary-board-head");
+  add(boardHead,
+    h("div", "", h("p", "eyebrow", "OBSERVED ROUNDS"), h("h3", "", `真实发生了 ${visibleRounds.length} 轮`)),
+    h("span", "", "S = 模型轮次，不是测试项"));
+  board.append(boardHead);
+
+  const cards = h("div", "loop-summary-grid");
+  visibleRounds.forEach((round) => {
+    const isBreakpoint = Boolean(gap && round.step === gap.nextStep);
+    const response = responseForRound(round);
+    const card = h("article", `loop-summary-card branch-${round.branch.type} ${isBreakpoint ? "is-breakpoint" : ""}`.trim());
+    const head = h("header", "loop-summary-card-head");
+    add(head,
+      h("span", "loop-summary-round", `S${round.step}`),
+      h("div", "", h("strong", "", round.branch.type === "finish" ? "停止" : "工具回环"), h("small", "", isBreakpoint ? "可观察断点" : `第 ${round.step} 轮`)),
+      h("span", `learn-branch-badge ${round.branch.type}`, BRANCH_LABELS[round.branch.type] || round.branch.type));
+    card.append(head);
+
+    const chain = h("div", "loop-summary-chain");
+    const decision = h("div", "loop-summary-chain-node decision");
+    add(decision,
+      h("span", "", "01 · 模型判断"),
+      h("strong", "", round.calls.length ? `请求 ${round.calls.map((entry) => entry.call.tool || "unknown").join(" + ")}` : "tool_calls=[]"));
+    chain.append(decision, h("span", "loop-summary-down", "↓"));
+
+    if (round.branch.type === "finish") {
+      const finish = h("div", "loop-summary-chain-node finish");
+      add(finish, h("span", "", "02 · Loop 控制"), h("strong", "", "进入 finish / stop"));
+      chain.append(finish);
+    } else {
+      const tools = h("div", "loop-summary-chain-node tool");
+      add(tools,
+        h("span", "", "02 · 工具执行"),
+        h("strong", "", round.calls.map((entry) => Story.argumentSummary(entry.call)).join("；") || "没有可展示的参数"));
+      chain.append(tools, h("span", "loop-summary-down", "↓"));
+      const observations = h("div", "loop-summary-chain-node observation");
+      const evidence = round.calls.map((entry) => {
+        if (!entry.result) return "没有配对的 tool_result";
+        return Story.observationSummary(entry.result);
+      }).join(" ");
+      add(observations, h("span", "", "03 · Observation"), h("strong", "", compactText(evidence, 150)));
+      chain.append(observations);
+    }
+    card.append(chain);
+
+    const resultLine = round.branch.type === "finish"
+      ? "没有 tool_calls，所以 Loop 停止；这只证明流程结束，不证明答案正确。"
+      : isBreakpoint && gap
+        ? `返回 next_start_line=${gap.nextStartLine}，但下一轮没有消费它。`
+        : "Observation 写入消息历史，供下一轮模型请求使用。";
+    card.append(h("p", "loop-summary-result", resultLine));
+    if (response) card.append(learnJumpButton(record, `定位 S${round.step} →`, response.sequence));
+    cards.append(card);
+  });
+  if (!visibleRounds.length) cards.append(h("div", "no-data", "当前任务没有带 step 的模型轮次，无法重建 Loop。"));
+  board.append(cards);
+  root.append(board);
+
+  const boundary = h("aside", "learn-boundary-note");
+  add(boundary,
+    h("strong", "", "这里说“接力”，不说“因为”"),
+    h("p", "", "字段出现、结果回写和下一轮响应都可以被 Trace 证明；模型内部为什么选择停止，没有被记录，也不能从这些字段补写。"));
+  root.append(boundary);
+
+  const drawer = h("details", "loop-trace-drawer");
+  const drawerSummary = h("summary", "");
+  add(drawerSummary,
+    h("span", "", "展开逐步真实 Trace"),
+    h("small", "", `${grouped.rounds.length} 轮 · ${record.events?.length || 0} 个事件 · 原始参数与字段`));
+  drawer.append(drawerSummary);
+  const drawerBody = h("div", "loop-trace-body");
+  drawerBody.append(machineTrace(record, context));
+  drawer.append(drawerBody);
+  root.append(drawer);
+  return root;
+}
+
+function machineTrace(record, context) {
+  const { grouped, gap } = context;
+  const machine = h("div", "learn-loop-machine");
+  const taskNode = h("div", "learn-loop-task");
+  add(taskNode,
+    h("span", "learn-loop-task-badge", "TASK"),
+    h("div", "", h("strong", "", record.id), h("p", "", context.summary.question || "任务契约未记录")));
+  machine.append(taskNode);
+
+  grouped.rounds.forEach((round, index) => {
+    if (gap && round.step === gap.nextStep && index > 0) {
+      const gapCard = h("aside", "learn-gap-callout");
+      add(gapCard,
+        h("span", "learn-gap-label", "可观察断点"),
+        h("h3", "", `第 ${gap.nextStartLine} 行已经出现，但下一次响应没有请求工具`),
+        h("p", "", `S${gap.fromStep} 的 Observation 返回第 ${gap.returnedRange.replace("-", "–")} 行，file_has_more=true，next_start_line=${gap.nextStartLine}，文件共 ${gap.totalLines ?? "?"} 行。S${gap.nextStep} 的 model_response 中 tool_calls=[]，Loop 进入 finish。`),
+        h("p", "learn-gap-boundary", "Trace 只能证明字段已经出现、下一轮没有消费它；没有记录模型为什么停止。"));
+      machine.append(gapCard);
+    }
+
+    const response = responseForRound(round);
+    const card = h("article", `learn-loop-round branch-${round.branch.type}`);
+    const header = h("header", "learn-loop-round-head");
+    const roundTitle = round.branch.type === "finish"
+      ? "模型没有请求工具，Loop 停止"
+      : (round.calls.length ? `模型请求 ${round.calls.map((entry) => entry.call.tool || "unknown").join(" + ")}` : "本轮没有可展示的决策");
+    add(header,
+      h("span", "learn-round-number", `S${round.step}`),
+      h("div", "", h("p", "", "MODEL DECISION"), h("h3", "", roundTitle)),
+      h("span", `learn-branch-badge ${round.branch.type}`, BRANCH_LABELS[round.branch.type] || round.branch.type));
+    card.append(header);
+
+    const flow = h("div", "learn-loop-flow");
+    const decision = h("div", "learn-loop-node decision");
+    add(decision,
+      h("span", "learn-loop-node-kind", "MODEL RESPONSE"),
+      h("h4", "", round.calls.length ? "tool_calls 非空" : "tool_calls=[]"),
+      h("p", "", round.calls.length
+        ? round.calls.map((entry) => `${entry.call.tool} · ${Story.argumentSummary(entry.call)}`).join("；")
+        : compactText(response?.content || "没有记录最终文本", 220)));
+    if (response) decision.append(learnJumpButton(record, `定位 S${round.step} model_response`, response.sequence));
+    flow.append(decision);
+
+    if (round.branch.type === "finish") {
+      flow.append(h("span", "learn-loop-arrow", "→"));
+      const finish = h("div", "learn-loop-node finish");
+      add(finish,
+        h("span", "learn-loop-node-kind", "CONTROL"),
+        h("h4", "", "Finish / Stop"),
+        h("p", "", "这条 model_response 不含 tool_calls。它是本次停止的结构证据，不代表任务已经验收通过。"));
+      flow.append(finish);
+    } else {
+      flow.append(h("span", "learn-loop-arrow", "→"));
+      if (round.calls.length) {
+        const observations = h("div", "learn-observation-stack");
+        round.calls.forEach((entry) => observations.append(renderLearnObservation(record, entry)));
+        flow.append(observations);
+      } else {
+        const missing = h("div", "learn-loop-node error");
+        add(missing, h("span", "learn-loop-node-kind", "EVIDENCE"), h("h4", "", "没有可展示的分支"), h("p", "", "本轮既没有 tool_call，也没有无 tool_calls 的 model_response。"));
+        flow.append(missing);
+      }
+    }
+    card.append(flow);
+
+    if (index < grouped.rounds.length - 1) {
+      const bridge = h("div", "learn-loop-bridge");
+      add(bridge, h("span", "", "↓"), h("strong", "", "Observation 写入消息历史"), h("span", "", "→"), h("strong", "", `构造 S${grouped.rounds[index + 1].step} model_request`));
+      card.append(bridge);
+    }
+    machine.append(card);
+  });
+  if (!grouped.rounds.length) machine.append(h("div", "no-data", "当前任务没有带 step 的模型轮次，无法重建 Loop。"));
+  return machine;
+}
+
+function testGroupQuestion(group) {
+  const questions = {
+    acceptance: "最终答案有没有交付任务要求的全部证据？",
+    constraint: "执行路径有没有绕过允许或禁止的约束？",
+    capability: "工具是否真的执行，并留下了成功 Observation？",
+    integrity: "实验条件是否真正触发，结论能不能复核？",
+  };
+  return questions[group.id] || group.subtitle || group.description;
+}
+
+function testGroupProves(group) {
+  const proves = {
+    acceptance: "最终响应是否满足逐项验收条件。",
+    constraint: "Trace 中是否出现禁用路径或允许路径违规。",
+    capability: "被检查的工具调用和结果是否真实发生。",
+    integrity: "配置要求的事件或跳条件是否在本 Trace 中出现。",
+  };
+  return proves[group.id] || group.description;
+}
+
+function testGroupCannotProve(group) {
+  const limits = {
+    acceptance: "不能证明过程合规、效率高，或模型理解了任务。",
+    constraint: "不能证明答案正确；没违规也不等于交付完成。",
+    capability: "不能证明任务通过；没调用也不等于模型永远没有这种能力。",
+    integrity: "SKIP 不是 PASS；也不能证明未触发机制本身有效。",
+  };
+  return limits[group.id] || "不能外推到没有检查的条件或没有记录的动机。";
+}
+
+function testGroupTone(group) {
+  if (group.summary.FAIL) return "fail";
+  if (group.summary.UNKNOWN) return "unknown";
+  if (group.summary.SKIP) return "skip";
+  if (group.summary.PASS) return "pass";
+  return "unknown";
+}
+
+function renderLearnTestDossier(group) {
+  const dossier = h("details", `learn-test-dossier test-${group.id} ${group.summary.FAIL ? "has-failure" : ""}`.trim());
+  const summary = h("summary", "");
+  add(summary,
+    h("div", "", h("strong", "", group.title), h("small", "", testGroupQuestion(group))),
+    h("code", "", learnGroupCounts(group)),
+    h("span", "", group.checks.length ? `逐条看 ${group.checks.length} 项 →` : "没有 check"));
+  dossier.append(summary);
+  const body = h("div", "learn-test-dossier-body");
+  body.append(h("p", "", group.description));
+  if (!group.checks.length) {
+    body.append(h("p", "brief-check-empty", "这一类没有 check；未记录不等于验证通过。"));
+    dossier.append(body);
+    return dossier;
+  }
+  const list = h("div", "learn-check-list");
+  group.checks.forEach((check) => {
+    const row = h("div", "learn-check-row");
+    const topRow = h("div", "learn-check-row-top");
+    add(topRow, checkBadge(check), h("strong", "", check.label));
+    add(row,
+      topRow,
+      h("p", "", check.purpose),
+      h("p", "learn-check-prevents", `防住：${check.prevents}`),
+      h("code", "", check.check));
+    if (check.skipReason) row.append(h("p", "check-skip-reason", check.skipReason));
+    list.append(row);
+  });
+  body.append(list);
+  dossier.append(body);
+  return dossier;
+}
+
+function renderLearnTests(record, context) {
+  const { summary, path } = context;
+  const acceptance = learnGroup(summary, "acceptance");
+  const integrity = learnGroup(summary, "integrity");
+  const root = h("section", "learn-step-panel learn-tests");
+  const intro = h("div", "learn-step-heading");
+  add(intro,
+    h("div", "", h("p", "eyebrow", "STEP 04 · 懂测试"), h("h2", "", "四类测试，其实在回答四个不同的问题")),
+    h("p", "", "先把四类问题分开，再看每一条 check。最终验收决定答案是否交付；过程、能力和完整性回答另外三件事。任何单一指标都不能替代这四类裁判。"));
+  root.append(intro);
+
+  const direct = h("aside", `learn-test-direct result-${testGroupTone(acceptance)}`);
+  add(direct,
+    h("span", "", "先看结果"),
+    h("strong", "", acceptance.summary.FAIL
+      ? `整体 ${summary.outcome} 的直接原因：最终验收有 ${acceptance.summary.FAIL} 项 FAIL。`
+      : `最终验收为 ${learnGroupVerdict(acceptance)}，整体 ${summary.outcome}。`),
+    h("p", "", acceptance.summary.FAIL
+      ? `不是 ${integrity.summary.SKIP ? "SKIP、Token 或工具成功次数" : "其他过程指标"}把任务判输；是最终答案没有满足验收证据。逐条失败项在下方“最终验收”抽屉里。`
+      : "仍然要分开阅读过程、能力与完整性，不能把整页压成一个总分。"));
+  root.append(direct);
+
+  const wrap = h("div", "learn-test-table-wrap");
+  const table = h("table", "learn-test-table");
+  const thead = h("thead");
+  const headRow = h("tr");
+  ["类别", "它在问什么", "本次结果", "能证明", "不能证明"].forEach((label) => headRow.append(h("th", "", label)));
+  thead.append(headRow);
+  table.append(thead);
+  const tbody = h("tbody");
+  summary.groups.forEach((group) => {
+    const row = h("tr", `group-${group.id} result-${testGroupTone(group)}`);
+    const category = h("td");
+    add(category, h("strong", "", group.title), h("small", "", group.subtitle));
+    const question = h("td");
+    question.dataset.label = "它在问什么";
+    question.append(document.createTextNode(testGroupQuestion(group)));
+    const result = h("td");
+    result.dataset.label = "本次结果";
+    result.append(h("span", `learn-test-result result-${testGroupTone(group)}`, learnGroupVerdict(group)), h("small", "", learnGroupCounts(group)));
+    const proves = h("td");
+    proves.dataset.label = "能证明";
+    proves.append(document.createTextNode(testGroupProves(group)));
+    const cannot = h("td");
+    cannot.dataset.label = "不能证明";
+    cannot.append(document.createTextNode(testGroupCannotProve(group)));
+    add(row, category, question, result, proves, cannot);
+    tbody.append(row);
+  });
+  table.append(tbody);
+  wrap.append(table);
+  root.append(wrap);
+
+  const dossiers = h("section", "learn-test-dossiers");
+  const dossiersHead = h("div", "learn-test-dossiers-head");
+  add(dossiersHead,
+    h("div", "", h("p", "eyebrow", "CHECK EVIDENCE"), h("h3", "", "哪一条检查真正进入了判定？")),
+    h("p", "", "默认折叠。需要追证据时，再展开对应类别。"));
+  dossiers.append(dossiersHead);
+  summary.groups.forEach((group) => dossiers.append(renderLearnTestDossier(group)));
+  root.append(dossiers);
+
+  const reference = h("details", "learn-test-reference");
+  reference.append(h("summary", "", "可选：看懂 PASS / FAIL / SKIP / UNKNOWN 和本次指标"));
+  const referenceBody = h("div", "learn-test-reference-body");
+  const statusRule = h("div", "learn-status-rule");
+  [
+    ["PASS", "断言满足", "不能外推成没检查的能力也通过"],
+    ["FAIL", "断言未满足", "对应问题没有被交付或发生"],
+    ["SKIP", "本次没有验证", "不是通过，不能算能力证据"],
+    ["UNKNOWN", "证据不足或未分类", "不是通过，也不等于失败"],
+  ].forEach(([status, title, note]) => {
+    const item = h("div", `learn-status-item ${STATUS_STYLE[status].className}`);
+    add(item, h("strong", "", `${STATUS_STYLE[status].symbol} ${status}`), h("span", "", title), h("small", "", note));
+    statusRule.append(item);
+  });
+  referenceBody.append(statusRule);
+
+  const contextSnapshot = record.context || {};
+  const metrics = h("div", "learn-metrics-strip");
+  add(metrics,
+    learnMetric("模型调用", formatNumber(contextSnapshot.model_calls ?? contextSnapshot.main_model_calls), "过程指标"),
+    learnMetric("总 Token", formatNumber(contextSnapshot.total_model_tokens ?? contextSnapshot.total_tokens), "成本指标，不是评分"),
+    learnMetric("工具调用", path.totalCalls, "是否真的发生"),
+    learnMetric("checks", summary.counts.PASS + summary.counts.FAIL + summary.counts.SKIP + summary.counts.UNKNOWN, "裁判项总数"));
+  referenceBody.append(metrics);
+
+  const metricNote = h("aside", "learn-metric-note");
+  add(metricNote,
+    h("strong", "", "指标 ≠ 通过标准"),
+    h("p", "", "调用次数、Token 和上下文占用解释路径与成本，不会自动把任务判成 PASS。整体结果来自 checks；其中 SKIP 只表示没有验证。"));
+  referenceBody.append(metricNote);
+  reference.append(referenceBody);
+  root.append(reference);
+  return root;
+}
+
+function learnTakeaways(record, context) {
+  const { summary, path, gap } = context;
+  const acceptance = learnGroup(summary, "acceptance");
+  const capability = learnGroup(summary, "capability");
+  const integrity = learnGroup(summary, "integrity");
+  const tools = path.usedTools.join(" + ") || "本次没有工具";
+  return [
+    {
+      title: "Agent 是一套装配，不是一颗“大模型脑”",
+      body: `这次运行同时涉及任务契约、上下文、模型、Loop、${tools}、Trace 和 Eval。零件“存在于目录”不算参与，必须看本次时机和状态。`,
+    },
+    {
+      title: "Observation 是写给下一步的数据",
+      body: gap
+        ? `S${gap.fromStep} 返回 next_start_line=${gap.nextStartLine}，但 S${gap.nextStep} 的 tool_calls=[]。我们能确认“线索出现后没有继续调用”，不能补写模型动机。`
+        : "工具结果会被写回消息历史；字段是否被下一轮消费，要回到 Trace 逐项核对，而不是听最终答案自述。",
+    },
+    {
+      title: "工具成功不等于任务交付",
+      body: capability.summary.PASS && acceptance.summary.FAIL
+        ? `能力证据 PASS ${capability.summary.PASS} 项，最终验收却 FAIL ${acceptance.summary.FAIL} 项。测试把“会不会用工具”和“有没有交付答案”分开裁判。`
+        : "能力证据只回答能力是否发生；最终验收另看答案是否交付。两个结论要分开读。",
+    },
+    {
+      title: "看到 SKIP，不要把它算成绿色 PASS",
+      body: integrity.summary.SKIP
+        ? `实验完整性有 ${integrity.summary.SKIP} 项 SKIP。它表示本次没有验证该能力，不是“验证通过”，也不能支撑对应机制的结论。`
+        : "本次完整性检查没有 SKIP；仍要继续区分 PASS、FAIL 与证据缺失，不能用一个总分抹平。",
+    },
+  ];
+}
+
+function renderLearnReview(record, context) {
+  const root = h("section", "learn-step-panel learn-review");
+  const intro = h("div", "learn-step-heading");
+  add(intro,
+    h("div", "", h("p", "eyebrow", "STEP 05 · 做复盘"), h("h2", "", "把这次运行压缩成四句能被证据支持的话")),
+    h("p", "", "复盘不是再讲一遍故事，而是把机制、证据边界和测试判定留在脑子里。"));
+  root.append(intro);
+
+  const takeaways = learnTakeaways(record, context);
+  const grid = h("div", "learn-takeaway-grid");
+  takeaways.forEach((takeaway, index) => {
+    const card = h("article", "learn-takeaway-card");
+    add(card,
+      h("span", "learn-takeaway-number", String(index + 1).padStart(2, "0")),
+      h("h3", "", takeaway.title),
+      h("p", "", takeaway.body));
+    grid.append(card);
+  });
+  root.append(grid);
+
+  const boundary = h("aside", "learn-boundary-note final");
+  add(boundary,
+    h("strong", "", "这次实验能说 / 不能说"),
+    h("p", "", "能说：当前 Trace 中出现了哪些结构、工具调用和验收结果。不能说：模型内部为什么停止，或一次 A/B 差异必然由某个参数造成。"));
+  root.append(boundary);
+
+  const dive = h("section", "learn-deep-dive");
+  add(dive,
+    h("p", "eyebrow", "GO DEEPER · 保留原有四个证据入口"),
+    h("h3", "", "现在再从不同角度拆同一条真实记录"),
+    h("p", "", "先完成五步，再进入深挖；入口不会切换任务，仍围绕当前学习任务。"));
+  const buttons = h("div", "learn-deep-grid");
+  [
+    ["story", "01", "任务故事", "沿问题、契约、Observation 和停止点读完整叙事。"],
+    ["replay", "02", "Loop 回放", "逐条查看当前任务的真实事件与原始字段。"],
+    ["anatomy", "03", "乐高拆解", "按代码模块和工具 registry 看装配关系。"],
+    ["compare", "04", "A/B 对比", "比较运行、参数、Token、任务和 checks 差异。"],
+  ].forEach(([view, number, title, detail]) => {
+    const button = h("button", "learn-deep-card");
+    button.type = "button";
+    button.dataset.deepView = view;
+    add(button,
+      h("span", "learn-deep-number", number),
+      h("strong", "", title),
+      h("span", "", detail),
+      h("small", "", "打开 →"));
+    button.addEventListener("click", () => switchView(view));
+    buttons.append(button);
+  });
+  dive.append(buttons);
+  root.append(dive);
+  return root;
+}
+
+function updateLearnNavigation() {
+  const step = Math.max(1, Math.min(LEARN_STEPS.length, Number(state.learnStep) || 1));
+  state.learnStep = step;
+  document.querySelectorAll("[data-learn-step]").forEach((button) => {
+    const active = Number(button.dataset.learnStep) === step;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "step");
+    else button.removeAttribute("aria-current");
+  });
+  const meta = LEARN_STEPS[step - 1];
+  const status = $("learn-step-status");
+  if (status) status.textContent = `第 ${step} / ${LEARN_STEPS.length} 步 · ${meta.title}：${meta.question}`;
+  const prev = $("learn-prev");
+  const next = $("learn-next");
+  if (prev) prev.disabled = step === 1;
+  if (next) {
+    next.disabled = step === LEARN_STEPS.length;
+    next.textContent = step === LEARN_STEPS.length ? "已到复盘" : `下一步：${LEARN_STEPS[step].title} →`;
+  }
+}
+
+function renderLearn() {
+  if (!state.data || !$("learn-content")) return;
+  const run = currentRun();
+  const record = currentRecord();
+  fillTaskSelect($("learn-task-select"), run, record?.id);
+  updateLearnNavigation();
+  const root = clear($("learn-content"));
+  if (!record) {
+    root.append(h("div", "no-data", "当前运行没有任务记录，无法开始五步学习。"));
+    return;
+  }
+  state.taskId = record.id;
+  const context = learnContext(record);
+  if (state.learnStep === 1) root.append(renderLearnConclusion(record, context));
+  else if (state.learnStep === 2) root.append(renderLearnComponents(record, context));
+  else if (state.learnStep === 3) root.append(renderLearnLoop(record, context));
+  else if (state.learnStep === 4) root.append(renderLearnTests(record, context));
+  else root.append(renderLearnReview(record, context));
+}
+
+function setLearnStep(step, scroll = false) {
+  state.learnStep = Math.max(1, Math.min(LEARN_STEPS.length, Number(step) || 1));
+  renderLearn();
+  if (scroll) {
+    $("learn-stepper")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 function renderStory() {
@@ -1674,7 +2790,7 @@ function renderCompare() {
 }
 
 function disableControls(disabled) {
-  document.querySelectorAll(".view-tab, #global-run-select, #task-select, #story-task-select, #compare-a, #compare-b, #swap-runs").forEach((element) => {
+  document.querySelectorAll(".view-tab, .learn-step, .learn-pager-button, #global-run-select, #task-select, #story-task-select, #learn-task-select, #compare-a, #compare-b, #swap-runs").forEach((element) => {
     element.disabled = disabled;
   });
 }
@@ -1709,8 +2825,11 @@ async function loadData() {
     }
     if (!data.runs.length) throw new Error("导出文件没有任何运行，请至少传入一份 Eval 报告。");
     state.data = data;
-    state.runId = data.runs[0].id;
-    state.taskId = data.runs[0].records[0]?.id || null;
+    const learnRun = data.runs.find((run) => run.records?.some((record) => normalizedStatus(record.passed, record.status) === "FAIL"))
+      || data.runs[0];
+    const learnRecord = preferredRecord(learnRun);
+    state.runId = learnRun.id;
+    state.taskId = learnRecord?.id || null;
     state.compareA = data.runs[0].id;
     state.compareB = data.runs[1]?.id || data.runs[0].id;
     $("empty-state").hidden = true;
@@ -1719,7 +2838,7 @@ async function loadData() {
     disableControls(false);
     document.querySelector(".local-badge").title = `生成于 ${data.generated_at} · ${data.data_classification}`;
     renderAll();
-    switchView("story");
+    switchView("learn");
   } catch (error) {
     showError(`${error.message}。请检查 data.json，或重新运行导出命令。`);
   }
@@ -1741,10 +2860,22 @@ function bindEvents() {
   $("global-run-select").addEventListener("change", (event) => {
     stopPlayback();
     state.runId = event.target.value;
-    state.taskId = currentRun()?.records[0]?.id || null;
+    state.taskId = preferredRecord(currentRun())?.id || null;
     state.eventIndex = 0;
     renderAll();
   });
+  $("learn-task-select").addEventListener("change", (event) => {
+    stopPlayback();
+    state.taskId = event.target.value;
+    state.eventIndex = 0;
+    syncTaskSelects();
+    renderLearn();
+  });
+  document.querySelectorAll("[data-learn-step]").forEach((button) => {
+    button.addEventListener("click", () => setLearnStep(button.dataset.learnStep, true));
+  });
+  $("learn-prev").addEventListener("click", () => setLearnStep(state.learnStep - 1, true));
+  $("learn-next").addEventListener("click", () => setLearnStep(state.learnStep + 1, true));
   $("story-task-select").addEventListener("change", (event) => {
     stopPlayback();
     state.taskId = event.target.value;

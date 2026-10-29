@@ -129,6 +129,113 @@ assert.equal(Story.loopNodeForEvent(payloads[1].events[0]), 'decision');
             record,
         )
 
+    def test_observation_summary_distinguishes_request_and_file_remainder(self) -> None:
+        self.run_story_assertions(
+            """
+const pageDoneButFileContinues = Story.observationSummary({
+  event: 'tool_result',
+  ok: true,
+  content: [
+    'total_lines: 85',
+    'requested_range: 23-44',
+    'returned_range: 23-44',
+    'has_more: false',
+    'next_start_line: 45',
+    'file_has_more: true',
+    'budget_limited: false',
+    '---',
+    'page',
+  ].join('\\n'),
+});
+assert.match(pageDoneButFileContinues, /文件仍有后续/);
+assert.match(pageDoneButFileContinues, /第 45 行/);
+assert.doesNotMatch(pageDoneButFileContinues, /已到文件末尾/);
+
+const fileDone = Story.observationSummary({
+  event: 'tool_result',
+  ok: true,
+  content: [
+    'total_lines: 44',
+    'requested_range: 23-44',
+    'returned_range: 23-44',
+    'has_more: false',
+    'file_has_more: false',
+    'budget_limited: false',
+    '---',
+    'page',
+  ].join('\\n'),
+});
+assert.match(fileDone, /已到文件末尾/);
+"""
+        )
+
+    def test_reports_continuation_gap_only_when_next_turn_stops(self) -> None:
+        events = [
+            {"event": "model_request", "step": 1, "context_chars": 500, "message_count": 2},
+            {
+                "event": "model_response",
+                "step": 1,
+                "content": "",
+                "tool_calls": [{"id": "call-1", "name": "read_file", "arguments": {"file_path": "audit.log"}}],
+            },
+            {"event": "tool_call", "step": 1, "tool": "read_file", "call_id": "call-1", "arguments": {"file_path": "audit.log"}},
+            {
+                "event": "tool_result",
+                "step": 1,
+                "tool": "read_file",
+                "call_id": "call-1",
+                "ok": True,
+                "content": (
+                    "total_lines: 85\nrequested_range: 1-85\nreturned_range: 23-44\n"
+                    "has_more: false\nnext_start_line: 45\nfile_has_more: true\n---\npage"
+                ),
+            },
+            {"event": "model_request", "step": 2, "context_chars": 900, "message_count": 4},
+        ]
+        stopped = {
+            "id": "task-1",
+            "events": events + [{"event": "model_response", "step": 2, "content": "No more matches", "tool_calls": []}],
+        }
+        continued = {
+            "id": "task-2",
+            "events": events + [
+                {
+                    "event": "model_response",
+                    "step": 2,
+                    "content": "",
+                    "tool_calls": [{"id": "call-2", "name": "read_file", "arguments": {"file_path": "audit.log", "start_line": 45}}],
+                },
+                {"event": "tool_call", "step": 2, "tool": "read_file", "call_id": "call-2", "arguments": {"file_path": "audit.log", "start_line": 45}},
+                {
+                    "event": "tool_result",
+                    "step": 2,
+                    "tool": "read_file",
+                    "call_id": "call-2",
+                    "ok": True,
+                    "content": (
+                        "total_lines: 85\nrequested_range: 45-85\nreturned_range: 45-85\n"
+                        "has_more: false\nfile_has_more: false\n---\npage"
+                    ),
+                },
+            ],
+        }
+
+        self.run_story_assertions(
+            """
+const gap = Story.continuationGap(payloads[0]);
+assert.ok(gap);
+assert.equal(gap.fromStep, 1);
+assert.equal(gap.nextStep, 2);
+assert.equal(gap.returnedRange, '23-44');
+assert.equal(gap.nextStartLine, 45);
+assert.equal(gap.totalLines, 85);
+assert.equal(gap.nextBranch, 'finish');
+assert.equal(Story.continuationGap(payloads[1]), null);
+""",
+            stopped,
+            continued,
+        )
+
     def test_finds_first_result_and_check_divergence(self) -> None:
         run_a = {
             "label": "off",
@@ -359,15 +466,46 @@ assert.equal(episodes.length, 4);
             {"id": "task-1", "prompt": "read all pages", "fixtures": [{"path": "audit.log", "kind": "repeated", "line_count": 99}]},
         )
 
-    def test_dashboard_defaults_to_story_and_folds_raw_evidence(self) -> None:
+    def test_dashboard_defaults_to_guided_path_and_folds_raw_evidence(self) -> None:
         html = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
         app = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('data-view="story"', html)
-        self.assertIn('class="view-tab active"', html)
+        self.assertEqual(html.count('class="view-tab active"'), 1)
+        self.assertIn(
+            'id="tab-learn" role="tab" aria-selected="true" '
+            'aria-controls="view-learn" data-view="learn"',
+            html,
+        )
+        self.assertIn(
+            '<section id="view-learn" class="view-panel" role="tabpanel" '
+            'aria-labelledby="tab-learn">',
+            html,
+        )
+        for view in ("story", "replay", "anatomy", "compare"):
+            self.assertIn(
+                f'<section id="view-{view}" class="view-panel" role="tabpanel" '
+                f'aria-labelledby="tab-{view}" hidden>',
+                html,
+            )
+
+        self.assertEqual(html.count("data-learn-step="), 5)
+        self.assertIn('aria-current="step"', html)
+        for marker in (
+            "learn-assembly-board",
+            "loop-summary-board",
+            "learn-test-table",
+            "learn-takeaway-grid",
+            "learn-deep-grid",
+        ):
+            self.assertIn(marker, app)
+
         self.assertIn("story.js", html)
+        self.assertIn('fetch("data.json"', app)
+        self.assertIn('h("details", "loop-trace-drawer"', app)
+        self.assertIn('h("details", `learn-test-dossier', app)
         self.assertIn("原始事件 JSON", app)
-        self.assertIn('h("details"', app)
+        self.assertIn("function h(tag, className, ...content)", app)
+        self.assertNotRegex(app, r'h\([^,\n]+,\s*h\(')
         self.assertNotIn("cdn.", html.lower())
 
 

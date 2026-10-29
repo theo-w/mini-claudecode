@@ -103,14 +103,52 @@
     if (metadata.returned_range) {
       const parts = [`读取第 ${metadata.returned_range.replace("-", "–")} 行`];
       if (metadata.total_lines !== null) parts.push(`文件共 ${metadata.total_lines} 行`);
-      if (metadata.has_more === true && metadata.next_start_line !== null) parts.push(`还有后续内容；从第 ${metadata.next_start_line} 行继续`);
-      else if (metadata.has_more === false) parts.push("已到文件末尾");
+      if (metadata.has_more === true) {
+        parts.push(metadata.next_start_line !== null
+          ? `本次请求范围还有后续；从第 ${metadata.next_start_line} 行继续`
+          : "本次请求范围还有后续；续读行未记录");
+      } else if (metadata.has_more === false) {
+        if (metadata.file_has_more === true) {
+          parts.push(metadata.next_start_line !== null
+            ? `本次请求范围已读完，但文件仍有后续；从第 ${metadata.next_start_line} 行继续`
+            : "本次请求范围已读完，但文件仍有后续；续读行未记录");
+        } else if (metadata.file_has_more === false) {
+          parts.push("已到文件末尾");
+        } else {
+          parts.push("本次请求范围已读完；文件是否还有后续未记录");
+        }
+      } else {
+        parts.push("本次范围和文件剩余状态未记录");
+      }
       if (metadata.budget_limited === true) parts.push("本次受 observation 预算限制");
       return `${parts.join("，")}。`;
     }
 
     const firstLine = content.split("\n").find((line) => line.trim()) || "";
     return firstLine.length > 150 ? `${firstLine.slice(0, 150)}…` : firstLine;
+  }
+
+  function continuationGap(record) {
+    const rounds = groupRounds(record).rounds;
+    for (let index = 0; index < rounds.length - 1; index += 1) {
+      const round = rounds[index];
+      const nextRound = rounds[index + 1];
+      if (nextRound.branch.type !== "finish") continue;
+      for (const entry of round.calls) {
+        if (!entry.result) continue;
+        const metadata = parseObservationMetadata(entry.result);
+        if (metadata.file_has_more !== true || metadata.next_start_line === null) continue;
+        return {
+          fromStep: round.step,
+          nextStep: nextRound.step,
+          returnedRange: metadata.returned_range,
+          nextStartLine: metadata.next_start_line,
+          totalLines: metadata.total_lines,
+          nextBranch: nextRound.branch.type,
+        };
+      }
+    }
+    return null;
   }
 
   function firstByType(events, eventType) {
@@ -875,6 +913,7 @@
     checkGroups,
     classifyCheck,
     collapseEpisodes,
+    continuationGap,
     findFirstDivergence,
     firstCheckDifference,
     fixtureSummary,

@@ -2,7 +2,7 @@
 
 一个用于系统学习 Agent 工程的最小代码 Agent Harness。项目目标不是再实现一个 Claude Code，而是把 Agent 的关键机制做成可运行、可观察、可评测的实验底座。
 
-当前版本：**v0.7.0 M1.5 Agent Causal Explainer**。首轮 Harness 基线见 [docs/BASELINE.md](docs/BASELINE.md)，M1.1 上下文实验见 [docs/M1_CONTEXT_BASELINE.md](docs/M1_CONTEXT_BASELINE.md)，M1.2 历史压缩实验见 [docs/M1_2_COMPACTION_BASELINE.md](docs/M1_2_COMPACTION_BASELINE.md)，M1.3 只读拆解台见 [规格说明](docs/specs/m1.3-agent-anatomy/spec.md)，M1.4 任务故事与 Loop 见 [规格说明](docs/specs/m1.4-agent-loop-story/spec.md)，M1.5 机制因果解释见 [规格说明](docs/specs/m1.5-agent-causal-explainer/spec.md)。
+当前版本：**v0.8.0 M1.6 Agent Guided Learning Path**。首轮 Harness 基线见 [docs/BASELINE.md](docs/BASELINE.md)，M1.1 上下文实验见 [docs/M1_CONTEXT_BASELINE.md](docs/M1_CONTEXT_BASELINE.md)，M1.2 历史压缩实验见 [docs/M1_2_COMPACTION_BASELINE.md](docs/M1_2_COMPACTION_BASELINE.md)，M1.3 只读拆解台见 [规格说明](docs/specs/m1.3-agent-anatomy/spec.md)，M1.4 任务故事与 Loop 见 [规格说明](docs/specs/m1.4-agent-loop-story/spec.md)，M1.5 机制因果解释见 [规格说明](docs/specs/m1.5-agent-causal-explainer/spec.md)，M1.6 五步学习路径见 [规格说明](docs/specs/m1.6-guided-learning-path/spec.md)。
 
 ## 现在能学到什么
 
@@ -23,6 +23,7 @@
 - 从真实字段匹配建立可观察因果边，把连续分页折叠成可展开的 episode
 - 按教学目的分组 checks，并区分 `PASS / FAIL / SKIP / UNKNOWN`
 - 事件驱动 Loop 回放、本次工具插槽识别，以及 A/B 首个任务/check 分叉定位
+- 默认五步学习路径：先读“任务 / 过程 / 断点 / 裁判”四张卡，再按需展开组件、Loop 和测试证据
 - 并排比较两组配置、指标和逐任务 checks，并可回到两侧真实 Trace
 - 本地模型与云端模型切换
 
@@ -39,6 +40,7 @@
 - [m1.3 Agent Anatomy](docs/specs/m1.3-agent-anatomy/spec.md)：真实模块、工具卡片、Loop 回放和实验对比
 - [m1.4 Agent Loop Story](docs/specs/m1.4-agent-loop-story/spec.md)：按轮次叙事、事件 Loop、乐高工具插槽和 A/B 首分叉
 - [m1.5 Agent Causal Explainer](docs/specs/m1.5-agent-causal-explainer/spec.md)：任务契约、fixture、可观察因果、episode、check 教学与实验边界
+- [m1.6 Agent Guided Learning Path](docs/specs/m1.6-guided-learning-path/spec.md)：五步学习路径、组件装配、测试语义与深挖证据边界
 - [模板](docs/templates/spec.md)：创建下一轮规格的起点
 
 行为变更不能只用“功能已增加”作为完成标准，必须有需求 ID、验收标准、测试/Trace/评测证据和已知限制。
@@ -83,7 +85,7 @@ CLOUD_API_KEY=your-key
 python3 main.py --provider cloud --model deepseek-chat
 ```
 
-## Agent Causal Explainer Dashboard
+## Agent Guided Learning Dashboard
 
 Dashboard 是现有 registry、Eval JSON 与 Trace 的**本地只读叙事投影**，不会在浏览器里启动 Agent 或执行工具。先从已有报告生成数据，再启动静态服务器：
 
@@ -100,14 +102,22 @@ python3 -m http.server 8766
 # 打开 http://127.0.0.1:8766/dashboard/
 ```
 
-页面包含四个视图：
+页面默认按 **01 → 05** 使用，不需要先懂 Trace：
 
-- **任务故事**：先看实验结论、任务 Prompt、fixture 设计与成功标准，再从字段相等处追到下一次调用；S1–S5 分页默认折叠为 episode，原始 JSON 仍可展开；
-- **Loop 回放**：逐事件查看模型输出、工具参数、observation、压缩、上下文曲线和 checks，并观察工具回环或停止分支；
-- **乐高拆解**：8 个学习模块、7 个真实工具、JSON Schema、风险、源码位置和本次实际使用的工具插槽；完整工具箱默认折叠；
+1. **看结论**：用“任务 / 过程 / 断点 / 裁判”四张卡回答这次要做什么、实际做了什么、Loop 停在哪里、Eval 为什么判输赢；
+2. **认零件**：按主轨、条件插件、旁路证据查看 Task、Context、Model、Loop、Finish、Tool、Approval、Compaction、Trace 和 Eval；卡片默认收起，展开后看作用、进入时机、架构位置、本次状态和源码入口；
+3. **看循环**：用当前 Trace 的 S1–S3 摘要理解 `model_response → tool / finish → Observation`，并定位“已有续读线索但下一轮停止”的可观察断点；
+4. **懂测试**：把最终验收、过程约束、能力证据、实验完整性分开，逐类看“问什么、本次结果、能证明、不能证明”；
+5. **做复盘**：读四条机制结论和证据边界，再选择下一步深挖。
+
+需要核对原始证据时，再进入四个深挖视图：
+
+- **任务故事**：查看任务 Prompt、fixture 设计、成功标准、字段因果和分页 episode；原始 JSON 默认折叠；
+- **Loop 回放**：逐事件查看模型输出、工具参数、observation、压缩、上下文曲线和 checks；
+- **乐高拆解**：8 个学习模块、7 个真实工具、JSON Schema、风险、源码位置和本次实际使用的工具插槽；
 - **A/B 对比**：先看首个结果不同的任务与首个 checks 分叉，再比较参数、成功率、Token、耗时、步数、压缩/回退和逐任务 checks。
 
-使用现有 M1.2 报告与 `evals/m1_2_tasks.json` 导出的快照为 3 次运行、18 条任务记录和 6 份任务契约。默认任务 fixture 为 `24 × 4 + 3 = 99` 行，形成 S1–S5 分页 episode、4 条强字段边与 S6 停止证据；compaction check 为 `SKIP`，因为本次策略是 `off`。`off` 为 4/6、68,087 总模型 Token；`extractive` 为 3/6、40,340 总模型 Token。这不是一次新的 Live Eval，也不能从单次快照推导稳定因果结论。
+使用现有 M1.2 报告与 `evals/m1_2_tasks.json` 导出的快照为 3 次运行、18 条任务记录和 6 份任务契约。学习页默认选中的失败样本 `m1_2_todo_fixme` 使用 85 行 fixture：S1–S2 共读取第 1–44 行，S2 返回 `file_has_more=true` 和 `next_start_line=45`，S3 却以 `tool_calls=[]` 进入 finish，最终验收 `0/3`、整体 `FAIL`；7 项 checks 中还有能力证据 `PASS 2`、过程约束 `PASS 1` 和实验完整性 `SKIP 1`。同一份数据仍可切换查看 `m1_2_value_retention` 的 99 行 S1–S5 分页 episode、4 条强字段边与 S6 停止证据。`off` 为 4/6、68,087 总模型 Token；`extractive` 为 3/6、40,340 总模型 Token。这不是一次新的 Live Eval，也不能从单次快照推导稳定因果结论。
 
 `dashboard/data.json` 被 Git 忽略，并标记为 `local-unredacted`。字符截断只控制载荷大小，不是脱敏；其中可能包含真实 observation、工具参数或最终回答，**不要直接公开分享**。没有数据文件时页面会显示导出命令，不会伪造演示运行。
 
@@ -139,7 +149,7 @@ python3 -m unittest discover -s tests -v
 
 覆盖工具 Schema、工作目录越权、符号链接逃逸、参数回传、审批拒绝和最大步数等行为。
 
-当前共有 74 个确定性测试，覆盖 Token usage 提取、Context Snapshot、上下文窗口配置、长文件分页、有界截断、M1/M1.2 fixture、group 指标、压缩触发、证据提取、tool-call 协议、模型摘要回退、摘要成本分账、真实工具目录、报告导出、任务契约、fixture 摘要、旧 Trace 关联、轮次故事、工具路径、Loop journey、因果边、episode、check 分类与 A/B 首分叉。
+当前共有 76 个确定性测试，覆盖 Token usage 提取、Context Snapshot、上下文窗口配置、长文件分页、有界截断、M1/M1.2 fixture、group 指标、压缩触发、证据提取、tool-call 协议、模型摘要回退、摘要成本分账、真实工具目录、报告导出、任务契约、fixture 摘要、旧 Trace 关联、轮次故事、工具路径、Loop journey、因果边、episode、check 分类、A/B 首分叉、分页剩余语义、continuation gap 与默认学习路径结构。
 
 ## 运行评测
 
@@ -242,10 +252,10 @@ scripts/
   export_dashboard.py         将 Eval JSON 只读导出为本地 Dashboard 数据
   run_eval.py                 评测执行器
 dashboard/
-  index.html                  四视图语义结构
-  styles.css                  故事、Loop、乐高装配板与响应式视觉
-  story.js                    轮次、因果边、episode、check 与 A/B 派生纯函数
-  app.js                      数据加载、故事、回放、筛选与 A/B 对比
+  index.html                  五步学习路径 + 四个深挖视图的语义结构
+  styles.css                  学习路径、组件装配、Loop、测试与响应式视觉
+  story.js                    轮次、因果边、episode、check、分页语义、continuation gap 与 A/B 派生纯函数
+  app.js                      数据加载、五步学习、故事、回放、拆解与 A/B 对比
 tests/                        不依赖模型的确定性测试
 docs/
   CONSTITUTION.md             长期工程原则与质量门禁
@@ -286,13 +296,18 @@ docs/
       plan.md                 静态导出与机制解释方案
       tasks.md                实现与浏览器验收任务账本
       implement.md            真实导出、QA 证据、偏差与安全边界
+    m1.6-guided-learning-path/
+      spec.md                 五步学习路径、组件装配、测试语义与证据边界规格
+      plan.md                 只读学习视图与渐进披露方案
+      tasks.md                学习体验、分页修正与浏览器验收任务账本
+      implement.md            四张故事卡、Loop 断点、QA 证据与已知限制
   templates/                  后续规格模板
   decisions/                  ADR 技术决策（含 ADR-004 只读投影）
 ```
 
 ## 下一步
 
-M1.2 已完成历史压缩机制、三策略评测和负面结果记录；M1.3 已把模块、工具、Loop 和实验差异做成真实数据的只读视图；M1.4 按轮次讲故事、突出实际工具插槽并定位 A/B 首分叉；M1.5 进一步解释任务契约、fixture、可观察因果、check 目的与实验边界。这些阶段只提升可解释性，不改变 Agent 行为。当前证据仍显示压缩能降低成本，但**没有稳定提高任务成功率的证据**，因此默认保持 `off`。
+M1.2 已完成历史压缩机制、三策略评测和负面结果记录；M1.3 已把模块、工具、Loop 和实验差异做成真实数据的只读视图；M1.4 按轮次讲故事、突出实际工具插槽并定位 A/B 首分叉；M1.5 进一步解释任务契约、fixture、可观察因果、check 目的与实验边界；M1.6 把默认入口改成五步学习路径，用组件装配、真实 Loop 和四类测试建立初学者心智模型。这些阶段只提升可解释性，不改变 Agent 行为，也没有新增 Live Eval。当前证据仍显示压缩能降低成本，但**没有稳定提高任务成功率的证据**，因此默认保持 `off`。
 
 1. 可选：为压缩证据时序、重复压缩和多次重复实验单独开下一份规格
 2. M2：`apply_patch`、修改后自动测试和验证修复闭环
