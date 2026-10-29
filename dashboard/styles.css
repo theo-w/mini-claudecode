@@ -3268,6 +3268,7 @@ body {
 .build-data-status small { margin-top: 2px; color: #a8bfba; font-size: 9px; line-height: 1.45; }
 .build-status-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #8dcfc2; box-shadow: 0 0 0 4px rgba(141,207,194,.1); }
 .build-data-status.is-ready .build-status-dot { background: #6ee0c5; }
+.build-data-status.is-public .build-status-dot { background: #6ee0c5; box-shadow: 0 0 0 4px rgba(110,224,197,.1); }
 .build-data-status.is-missing .build-status-dot { background: #e7be64; box-shadow: 0 0 0 4px rgba(231,190,100,.1); }
 .build-data-status.is-error .build-status-dot { background: #ed8870; box-shadow: 0 0 0 4px rgba(237,136,112,.1); }
 .build-blueprint {

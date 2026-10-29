@@ -2,7 +2,7 @@
 
 一个用于系统学习 Agent 工程的最小代码 Agent Harness。项目目标不是再实现一个 Claude Code，而是把 Agent 的关键机制做成可运行、可观察、可评测的实验底座。
 
-当前版本：**v0.11.0 M1.9 Agent Lego Usability**。首轮 Harness 基线见 [docs/BASELINE.md](docs/BASELINE.md)，M1.1 上下文实验见 [docs/M1_CONTEXT_BASELINE.md](docs/M1_CONTEXT_BASELINE.md)，M1.2 历史压缩实验见 [docs/M1_2_COMPACTION_BASELINE.md](docs/M1_2_COMPACTION_BASELINE.md)，M1.3 只读拆解台见 [规格说明](docs/specs/m1.3-agent-anatomy/spec.md)，M1.4 任务故事与 Loop 见 [规格说明](docs/specs/m1.4-agent-loop-story/spec.md)，M1.5 机制因果解释见 [规格说明](docs/specs/m1.5-agent-causal-explainer/spec.md)，M1.6 五步学习路径见 [规格说明](docs/specs/m1.6-guided-learning-path/spec.md)，M1.7 从零建造课程见 [规格说明](docs/specs/m1.7-agent-evolution-lab/spec.md)，M1.8 可装配乐高实验见 [规格说明](docs/specs/m1.8-agent-lego-lab/spec.md)，M1.9 可学习乐高工作台见 [规格说明](docs/specs/m1.9-agent-lego-usability/spec.md)。
+当前版本：**v0.12.0 M1.10 Public Learning Demo**。首轮 Harness 基线见 [docs/BASELINE.md](docs/BASELINE.md)，M1.1 上下文实验见 [docs/M1_CONTEXT_BASELINE.md](docs/M1_CONTEXT_BASELINE.md)，M1.2 历史压缩实验见 [docs/M1_2_COMPACTION_BASELINE.md](docs/M1_2_COMPACTION_BASELINE.md)，M1.3 只读拆解台见 [规格说明](docs/specs/m1.3-agent-anatomy/spec.md)，M1.4 任务故事与 Loop 见 [规格说明](docs/specs/m1.4-agent-loop-story/spec.md)，M1.5 机制因果解释见 [规格说明](docs/specs/m1.5-agent-causal-explainer/spec.md)，M1.6 五步学习路径见 [规格说明](docs/specs/m1.6-guided-learning-path/spec.md)，M1.7 从零建造课程见 [规格说明](docs/specs/m1.7-agent-evolution-lab/spec.md)，M1.8 可装配乐高实验见 [规格说明](docs/specs/m1.8-agent-lego-lab/spec.md)，M1.9 可学习乐高工作台见 [规格说明](docs/specs/m1.9-agent-lego-usability/spec.md)，M1.10 公开学习 Demo 见 [规格说明](docs/specs/m1.10-public-demo/spec.md)。
 
 ## 现在能学到什么
 
@@ -100,6 +100,15 @@ python3 -m http.server 8766
 # 打开 http://127.0.0.1:8766/dashboard/
 ```
 
+公开模式只保留“从零建造”和“乐高实验”两个确定性交互，不请求 `data.json`、不调用模型、不执行工具。本地可直接预览：
+
+```bash
+python3 -m http.server 8766
+# 打开 http://127.0.0.1:8766/dashboard/?demo=public
+```
+
+在 Render 域名下页面会自动进入同一公开模式，发布路径仅为 `dashboard/`。本地存在已导出的 `data.json` 时，直接打开 `/dashboard/` 仍保留完整七视图。
+
 默认先进入 **00 从零建造**。7 章都按同一条因果节奏推进：先看旧版本为什么失败，再加一个最小补丁，随后观察确定性教学快照，解释零件边界，最后用检查题确认理解。章节顺序是：
 
 1. 只有模型：会回答，但不能读取或执行；
@@ -190,7 +199,7 @@ python3 -m unittest discover -s tests -v
 
 覆盖工具 Schema、工作目录越权、符号链接逃逸、参数回传、审批拒绝和最大步数等行为。
 
-当前共有 92 个确定性测试，覆盖 Token usage 提取、Context Snapshot、上下文窗口配置、长文件分页、有界截断、M1/M1.2 fixture、group 指标、压缩触发、证据提取、tool-call 协议、模型摘要回退、摘要成本分账、真实工具目录、报告导出、任务契约、fixture 摘要、旧 Trace 关联、轮次故事、工具路径、Loop journey、因果边、episode、check 分类、A/B 首分叉、分页剩余语义、continuation gap、默认学习路径结构，以及乐高装配结果、三结论语义、256 组合穷举、A/B 归因模式、单块推荐、耗时公式和无执行通道。
+当前共有 95 个确定性测试，覆盖公开模式数据短路与 Render 静态发布边界、Token usage 提取、Context Snapshot、上下文窗口配置、长文件分页、有界截断、M1/M1.2 fixture、group 指标、压缩触发、证据提取、tool-call 协议、模型摘要回退、摘要成本分账、真实工具目录、报告导出、任务契约、fixture 摘要、旧 Trace 关联、轮次故事、工具路径、Loop journey、因果边、episode、check 分类、A/B 首分叉、分页剩余语义、continuation gap、默认学习路径结构，以及乐高装配结果、三结论语义、256 组合穷举、A/B 归因模式、单块推荐、耗时公式和无执行通道。
 
 ## 运行评测
 

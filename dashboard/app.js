@@ -7,6 +7,7 @@ const Lego = globalThis.AgentLego;
 const state = {
   data: null,
   dataState: "loading",
+  publicDemo: false,
   view: "build",
   buildStep: 0,
   buildAnswers: {},
@@ -241,10 +242,17 @@ function preferredRecord(run) {
     || null;
 }
 
+function publicDemoRequested() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("demo") === "public" || window.location.hostname.endsWith(".onrender.com");
+}
+
 function syncViewVisibility() {
   const standaloneView = ["build", "lego"].includes(state.view);
   document.querySelectorAll(".view-tab").forEach((tab) => {
-    const active = tab.dataset.view === state.view;
+    const supported = !state.publicDemo || ["build", "lego"].includes(tab.dataset.view);
+    const active = supported && tab.dataset.view === state.view;
+    tab.hidden = !supported;
     tab.classList.toggle("active", active);
     tab.setAttribute("aria-selected", String(active));
     tab.tabIndex = active ? 0 : -1;
@@ -253,13 +261,14 @@ function syncViewVisibility() {
     panel.hidden = panel.id !== `view-${state.view}`;
   });
   const runPicker = document.querySelector(".run-picker");
-  if (runPicker) runPicker.hidden = state.view === "lego";
+  if (runPicker) runPicker.hidden = !state.data || state.view === "lego";
   $("dashboard-content").hidden = standaloneView || !state.data;
   $("empty-state").hidden = standaloneView || state.dataState !== "missing";
   $("error-state").hidden = standaloneView || state.dataState !== "error";
 }
 
 function switchView(view) {
+  if (state.publicDemo && !["build", "lego"].includes(view)) view = "build";
   if (state.view !== view) stopPlayback();
   state.view = view;
   syncViewVisibility();
@@ -317,20 +326,25 @@ function renderBuildDataStatus() {
       title: "真实 Trace 已接通",
       detail: `${state.data?.runs?.length || 0} 次运行可供继续解剖`,
     }
-    : status === "error"
+    : status === "public"
       ? {
-        title: "真实数据暂不可用",
-        detail: "课程内容不依赖数据，可以先完成基础课",
+        title: "公开版只开放两个确定性实验",
+        detail: "课程与装配实验不依赖真实 Trace",
       }
-      : status === "missing"
+      : status === "error"
         ? {
-          title: "基础课可以独立完成",
-          detail: "真实解剖入口需要 dashboard/data.json",
+          title: "真实数据暂不可用",
+          detail: "课程内容不依赖数据，可以先完成基础课",
         }
-        : {
-          title: "课程可独立阅读",
-          detail: "正在检查真实 Trace…",
-        };
+        : status === "missing"
+          ? {
+            title: "基础课可以独立完成",
+            detail: "真实解剖入口需要 dashboard/data.json",
+          }
+          : {
+            title: "课程可独立阅读",
+            detail: "正在检查真实 Trace…",
+          };
   root.replaceChildren();
   root.className = `build-data-status is-${status}`;
   add(root,
@@ -495,18 +509,43 @@ function renderBuildFuture(chapter) {
   outcomes.append(list);
   section.append(outcomes);
 
+  const dataReady = state.dataState === "ready";
+  const publicDemo = state.dataState === "public";
+  const ctaCopy = publicDemo
+    ? {
+      eyebrow: "NEXT · LEGO LAB",
+      title: "公开版先把装配实验玩明白",
+      body: "用同一固定任务反复拆装 8 个零件，观察任务验收、执行边界和可审计性怎样变化。公开版不读取或展示真实 Trace。",
+      note: "两站可用 · 不调用 API · 不执行工具",
+    }
+    : dataReady
+      ? {
+        eyebrow: "NEXT · REAL TRACE",
+        title: "现在把同一套问题带到真实运行里",
+        body: "真实解剖不要求你先相信课程。它会打开一次实际 Trace，让你逐个检查工具、Observation、Loop、checks 和最终交付。",
+        note: "真实数据已就绪",
+      }
+      : {
+        eyebrow: "NEXT · LOCAL TRACE",
+        title: "真实解剖需要一份本地 Trace",
+        body: "课程已经可以独立完成。若要检查真实工具调用与测试证据，请先导出本地 data.json，再进入完整模式。",
+        note: "需要导出 data.json",
+      };
   const cta = h("div", "build-final-cta");
   add(cta,
-    h("div", "", h("p", "eyebrow", "NEXT · REAL TRACE"), h("h3", "", "现在把同一套问题带到真实运行里"), h("p", "", "真实解剖不要求你先相信课程。它会打开一次实际 Trace，让你逐个检查工具、Observation、Loop、checks 和最终交付。")),
-    h("span", "build-final-note", state.dataState === "ready" ? "真实数据已就绪" : "需要导出 data.json"));
-  const legoButton = h("button", "build-enter-lego", "先玩自由装配 →");
+    h("div", "", h("p", "eyebrow", ctaCopy.eyebrow), h("h3", "", ctaCopy.title), h("p", "", ctaCopy.body)),
+    h("span", "build-final-note", ctaCopy.note));
+  const legoButton = h("button", "build-enter-lego", publicDemo ? "继续玩乐高实验 →" : "先玩自由装配 →");
   legoButton.type = "button";
   legoButton.addEventListener("click", () => switchView("lego"));
-  const traceButton = h("button", "build-enter-trace", "进入真实解剖 →");
-  traceButton.type = "button";
-  traceButton.addEventListener("click", () => switchView("learn"));
   const actions = h("div", "build-final-actions");
-  actions.append(legoButton, traceButton);
+  actions.append(legoButton);
+  if (!publicDemo) {
+    const traceButton = h("button", "build-enter-trace", dataReady ? "进入真实解剖 →" : "查看接入说明 →");
+    traceButton.type = "button";
+    traceButton.addEventListener("click", () => switchView("learn"));
+    actions.append(traceButton);
+  }
   cta.append(actions);
   section.append(cta);
   return section;
@@ -608,7 +647,8 @@ function renderBuild() {
   }
   if (next) {
     const atEnd = index === Evolution.CHAPTERS.length - 1;
-    next.textContent = atEnd ? "进入真实解剖 →" : `下一章：${Evolution.chapterAt(index + 1).routeLabel} →`;
+    const finishLabel = state.publicDemo ? "进入乐高实验 →" : "进入真实解剖 →";
+    next.textContent = atEnd ? finishLabel : `下一章：${Evolution.chapterAt(index + 1).routeLabel} →`;
     next.classList.toggle("is-finish", atEnd);
   }
   if (label) label.textContent = Evolution.progressLabel(index);
@@ -3852,8 +3892,22 @@ function disableControls(disabled) {
   });
 }
 
-function showEmpty() {
-  state.dataState = "missing";
+function configurePublicDemo() {
+  state.publicDemo = true;
+  document.body.classList.add("public-demo");
+  const badge = document.querySelector(".local-badge");
+  const label = badge?.querySelector(".badge-label");
+  if (label) label.textContent = "公开学习实验台";
+  if (badge) badge.title = "确定性教学模拟 · 不调用 API · 不执行工具";
+  const buildNumber = document.querySelector("#tab-build > span");
+  const legoNumber = document.querySelector("#tab-lego > span");
+  if (buildNumber) buildNumber.textContent = "01";
+  if (legoNumber) legoNumber.textContent = "02";
+}
+
+function showEmpty(publicDemo = false) {
+  if (publicDemo) configurePublicDemo();
+  state.dataState = publicDemo ? "public" : "missing";
   syncViewVisibility();
   if (state.view === "build") renderBuild();
   if (state.view === "lego") renderLego();
@@ -3861,6 +3915,7 @@ function showEmpty() {
 }
 
 function showError(message) {
+  state.publicDemo = false;
   state.dataState = "error";
   $("error-message").textContent = message;
   syncViewVisibility();
@@ -3871,10 +3926,14 @@ function showError(message) {
 
 async function loadData() {
   try {
+    if (publicDemoRequested()) {
+      showEmpty(true);
+      return;
+    }
     if (!Story) throw new Error("story.js 未加载，无法把 Trace 重构为任务故事");
     const response = await fetch("data.json", { cache: "no-store" });
     if (response.status === 404) {
-      showEmpty();
+      showEmpty(false);
       return;
     }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -3885,6 +3944,7 @@ async function loadData() {
     if (!data.runs.length) throw new Error("导出文件没有任何运行，请至少传入一份 Eval 报告。");
     state.data = data;
     state.dataState = "ready";
+    state.publicDemo = false;
     const learnRun = data.runs.find((run) => run.records?.some((record) => normalizedStatus(record.passed, record.status) === "FAIL"))
       || data.runs[0];
     const learnRecord = preferredRecord(learnRun);
@@ -3956,7 +4016,9 @@ function bindEvents() {
   $("build-prev").addEventListener("click", () => setBuildStep(state.buildStep - 1, { scroll: true, focus: true }));
   $("build-next").addEventListener("click", () => {
     if (!Evolution) return;
-    if (state.buildStep === Evolution.CHAPTERS.length - 1) switchView("learn");
+    if (state.buildStep === Evolution.CHAPTERS.length - 1) {
+      switchView(state.publicDemo ? "lego" : "learn");
+    }
     else setBuildStep(state.buildStep + 1, { scroll: true, focus: true });
   });
   $("empty-back-build").addEventListener("click", () => switchView("build"));
