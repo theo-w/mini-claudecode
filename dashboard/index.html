@@ -8,6 +8,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='12' height='17' rx='3' fill='%23147d73'/%3E%3Crect x='17' y='3' width='12' height='26' rx='3' fill='%23db6b4f'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
   <script src="evolution.js" defer></script>
+  <script src="lego.js" defer></script>
   <script src="story.js" defer></script>
   <script src="app.js" defer></script>
 </head>
@@ -28,6 +29,7 @@
         <button class="view-tab" id="tab-replay" role="tab" aria-selected="false" aria-controls="view-replay" data-view="replay"><span>03</span>Loop 回放</button>
         <button class="view-tab" id="tab-anatomy" role="tab" aria-selected="false" aria-controls="view-anatomy" data-view="anatomy"><span>04</span>乐高拆解</button>
         <button class="view-tab" id="tab-compare" role="tab" aria-selected="false" aria-controls="view-compare" data-view="compare"><span>05</span>A/B 对比</button>
+        <button class="view-tab" id="tab-lego" role="tab" aria-selected="false" aria-controls="view-lego" data-view="lego"><span>06</span>乐高实验</button>
       </nav>
       <label class="run-picker">当前运行<select id="global-run-select" aria-label="当前运行"><option value="">课程模式 · 等待数据</option></select></label>
     </div>
@@ -90,6 +92,92 @@
           </nav>
         </article>
       </div>
+    </section>
+
+
+    <section id="view-lego" class="view-panel lego-view" role="tabpanel" aria-labelledby="tab-lego" hidden>
+      <header class="lego-hero">
+        <div class="lego-hero-copy">
+          <p class="eyebrow">M1.8 · LEGO MECHANISM LAB</p>
+          <h1>别只看拆解，<br>亲手装一个 Agent</h1>
+          <p>同一个任务、同一个脚本化模型。你可以自由加入或拆掉 Tool、Loop、Guardrail、Trace 和 Eval，运行后比较：到底完成了什么、卡在哪里、多花了多少时间，以及结果是否可信。</p>
+          <div class="lego-hero-rules" aria-label="实验规则">
+            <span><i>01</i>自由拆装</span>
+            <span><i>02</i>固定任务</span>
+            <span><i>03</i>前后对比</span>
+          </div>
+        </div>
+        <aside class="lego-hero-aside" aria-label="固定模型说明">
+          <div class="lego-model-brick">
+            <div class="lego-studs" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <span class="lego-fixed-label">FIXED MODEL · 不换模型</span>
+            <strong>scripted-agent-v1</strong>
+            <p>每次都遵循同一组脚本化决策。差异来自你装上的 Harness 零件，而不是模型随机发挥。</p>
+            <div class="lego-model-ports" aria-hidden="true"><span></span><span></span><span></span></div>
+          </div>
+          <p class="lego-honesty-note">确定性机制模拟 · 不调用 API · 不执行工具</p>
+        </aside>
+      </header>
+
+      <section class="lego-mission" aria-labelledby="lego-task-title">
+        <div class="lego-mission-copy">
+          <p class="eyebrow">FIXED MISSION · 同题对照</p>
+          <h2 id="lego-task-title"></h2>
+          <p id="lego-task-prompt"></p>
+          <code id="lego-task-fixture"></code>
+        </div>
+        <div id="lego-task-checks" class="lego-task-checks"></div>
+      </section>
+
+      <div class="lego-workspace">
+        <aside class="lego-shelf-panel" aria-labelledby="lego-shelf-title">
+          <div class="lego-panel-head">
+            <div><p class="eyebrow">PARTS BIN</p><h2 id="lego-shelf-title">零件仓</h2></div>
+            <span>点按或拖入装配台</span>
+          </div>
+          <div id="lego-shelf" class="lego-shelf"></div>
+        </aside>
+
+        <section class="lego-canvas" aria-labelledby="lego-board-title">
+          <header class="lego-canvas-head">
+            <div><p class="eyebrow">ASSEMBLY DECK</p><h2 id="lego-board-title">当前装配</h2><p id="lego-selection-summary"></p></div>
+            <div class="lego-run-actions">
+              <button id="lego-clear-button" class="lego-clear-button" type="button">清空装配</button>
+              <button id="lego-run-button" class="lego-run-button" type="button"><span>▶</span> 运行装配</button>
+            </div>
+          </header>
+          <section class="lego-presets" aria-labelledby="lego-presets-title">
+            <div class="lego-preset-head"><strong id="lego-presets-title">快速装配</strong><small>不是标准答案，是四个对照起点</small></div>
+            <div id="lego-presets"></div>
+          </section>
+          <div id="lego-board" class="lego-board" aria-live="polite"></div>
+          <p class="lego-board-footnote"><strong>怎么玩：</strong>先运行“只有模型”，再逐个加零件。每次只改一件事，差异才容易解释。拖动与点按等价；手机可直接点按。</p>
+        </section>
+
+        <aside class="lego-result-panel" aria-labelledby="lego-result-title">
+          <div class="lego-panel-head">
+            <div><p class="eyebrow">RUN INSPECTOR</p><h2 id="lego-result-title">这次发生了什么</h2></div>
+            <span id="lego-run-badge" class="lego-run-badge">尚未运行</span>
+          </div>
+          <div id="lego-result" class="lego-result" aria-live="polite"></div>
+        </aside>
+      </div>
+
+      <section class="lego-compare-section" aria-labelledby="lego-compare-title">
+        <div class="lego-section-heading">
+          <div><p class="eyebrow">A → B · SAME MODEL</p><h2 id="lego-compare-title">有它 / 没它，差在哪里</h2></div>
+          <p>自动比较最近两次已完成运行。完成度、耗时与治理状态分开读，不用一个“总分”掩盖取舍。</p>
+        </div>
+        <div id="lego-compare" class="lego-compare"></div>
+      </section>
+
+      <section class="lego-history-section" aria-labelledby="lego-history-title">
+        <div class="lego-section-heading">
+          <div><p class="eyebrow">YOUR EXPERIMENTS</p><h2 id="lego-history-title">装配记录</h2></div>
+          <p>最多保留最近 6 次。载入旧装配后可以只改一个零件，再跑一次。</p>
+        </div>
+        <div id="lego-history" class="lego-history"></div>
+      </section>
     </section>
 
     <section id="empty-state" class="empty-state" hidden>

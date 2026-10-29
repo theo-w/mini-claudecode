@@ -2,7 +2,7 @@
 
 一个用于系统学习 Agent 工程的最小代码 Agent Harness。项目目标不是再实现一个 Claude Code，而是把 Agent 的关键机制做成可运行、可观察、可评测的实验底座。
 
-当前版本：**v0.9.0 M1.7 Agent Evolution Lab**。首轮 Harness 基线见 [docs/BASELINE.md](docs/BASELINE.md)，M1.1 上下文实验见 [docs/M1_CONTEXT_BASELINE.md](docs/M1_CONTEXT_BASELINE.md)，M1.2 历史压缩实验见 [docs/M1_2_COMPACTION_BASELINE.md](docs/M1_2_COMPACTION_BASELINE.md)，M1.3 只读拆解台见 [规格说明](docs/specs/m1.3-agent-anatomy/spec.md)，M1.4 任务故事与 Loop 见 [规格说明](docs/specs/m1.4-agent-loop-story/spec.md)，M1.5 机制因果解释见 [规格说明](docs/specs/m1.5-agent-causal-explainer/spec.md)，M1.6 五步学习路径见 [规格说明](docs/specs/m1.6-guided-learning-path/spec.md)，M1.7 从零建造课程见 [规格说明](docs/specs/m1.7-agent-evolution-lab/spec.md)。
+当前版本：**v0.10.0 M1.8 Agent Lego Lab**。首轮 Harness 基线见 [docs/BASELINE.md](docs/BASELINE.md)，M1.1 上下文实验见 [docs/M1_CONTEXT_BASELINE.md](docs/M1_CONTEXT_BASELINE.md)，M1.2 历史压缩实验见 [docs/M1_2_COMPACTION_BASELINE.md](docs/M1_2_COMPACTION_BASELINE.md)，M1.3 只读拆解台见 [规格说明](docs/specs/m1.3-agent-anatomy/spec.md)，M1.4 任务故事与 Loop 见 [规格说明](docs/specs/m1.4-agent-loop-story/spec.md)，M1.5 机制因果解释见 [规格说明](docs/specs/m1.5-agent-causal-explainer/spec.md)，M1.6 五步学习路径见 [规格说明](docs/specs/m1.6-guided-learning-path/spec.md)，M1.7 从零建造课程见 [规格说明](docs/specs/m1.7-agent-evolution-lab/spec.md)，M1.8 可装配乐高实验见 [规格说明](docs/specs/m1.8-agent-lego-lab/spec.md)。
 
 ## 现在能学到什么
 
@@ -25,6 +25,7 @@
 - 事件驱动 Loop 回放、本次工具插槽识别，以及 A/B 首个任务/check 分叉定位
 - 默认五步学习路径：先读“任务 / 过程 / 断点 / 裁判”四张卡，再按需展开组件、Loop 和测试证据
 - 从零建造 7 章：按“只有模型 → Tool → Tool Loop → Registry → 安全边界 → Trace → Eval”逐步撞墙、加零件、看证据
+- 可交互的乐高实验：8 个零件自由装配、4 组预设、逐事件重放、最近两次 A/B 和最近六次历史；确定性教学模拟，不调用 API
 - 并排比较两组配置、指标和逐任务 checks，并可回到两侧真实 Trace
 - 本地模型与云端模型切换
 
@@ -43,6 +44,7 @@
 - [m1.5 Agent Causal Explainer](docs/specs/m1.5-agent-causal-explainer/spec.md)：任务契约、fixture、可观察因果、episode、check 教学与实验边界
 - [m1.6 Agent Guided Learning Path](docs/specs/m1.6-guided-learning-path/spec.md)：五步学习路径、组件装配、测试语义与深挖证据边界
 - [m1.7 Agent Evolution Lab](docs/specs/m1.7-agent-evolution-lab/spec.md)：从零建造 7 章、每章最小补丁、确定性快照、检查题与 Skill 后续路线
+- [m1.8 Agent Lego Lab](docs/specs/m1.8-agent-lego-lab/spec.md)：8 零件自由装配、确定性事件重放、治理分账、A/B 与实验历史
 - [模板](docs/templates/spec.md)：创建下一轮规格的起点
 
 行为变更不能只用“功能已增加”作为完成标准，必须有需求 ID、验收标准、测试/Trace/评测证据和已知限制。
@@ -54,7 +56,7 @@
 - `run_shell` 和 `run_python` 都不是安全沙箱
 - 审批机制可以防止未确认执行，但不能阻止用户批准后的恶意代码
 - 真正的恶意代码隔离需要容器、虚拟机或操作系统级权限控制，计划在后续阶段加入
-- 当前包含**本地只读 Dashboard**；不包含在线调参、工具执行式 Web UI、多 Agent、RAG、向量数据库和 MCP 接入
+- 当前包含**本地只读 Dashboard 和确定性乐高教学实验**；乐高实验只调整教学装配，不调用模型、不执行工具，也不包含在线调参、多 Agent、RAG、向量数据库和 MCP 接入
 
 ## 快速开始
 
@@ -106,7 +108,26 @@ python3 -m http.server 8766
 6. Trace：把发生过什么变成可观察证据；
 7. Eval：区分能力证据与最终任务验收，明确 `SKIP != PASS`。
 
-要解锁“真实解剖”及其深挖视图，再用已有报告生成数据：
+### 06 乐高实验：亲手装一次，再看“有它 / 没它”
+
+进入 **06 乐高实验**，不需要 `data.json`。固定任务、固定脚本化模型，只改变装配：
+
+1. 点“只有模型”并运行，先看到 `BLOCKED · 0/3`；
+2. 换成“只加读取”，看到工具动作发生，但 Loop 断在 Observation 之后；
+3. 换成“能干活”，三个动作完成，却因为没有 Eval 只能得到 `UNVERIFIED`；
+4. 换成“完整可信”，动作仍为 `3/3`，但系统同时具备边界、轨迹和验收；
+5. 任意拆下一个零件再运行，最近两次会自动进入 A/B，最近六次装配可重新载入。
+
+| 装配 | 动作完成 | 结论 | 工具调用 | 模型回合 | 模拟耗时 |
+|---|---:|---|---:|---:|---:|
+| 只有模型 | 0/3 | `BLOCKED` | 0 | 1 | 0.72s |
+| 只加读取 | 1/3 | `INCOMPLETE` | 1 | 1 | 0.90s |
+| 能干活 | 3/3 | `UNVERIFIED` | 3 | 4 | 3.42s |
+| 完整可信 | 3/3 | `PASS` | 3 | 4 | 3.88s |
+
+“模拟耗时”由公开公式计算，只表示装配复杂度，不是网络、模型或工具的真实性能。该实验是确定性教学模拟：**不调用 API、不执行文件或命令**，也不能替代 Live Eval。
+
+要查看真实数据投影和原有深挖视图，再用已有报告生成数据：
 
 ```bash
 python3 scripts/export_dashboard.py \
@@ -118,7 +139,7 @@ python3 scripts/export_dashboard.py \
   --output dashboard/data.json
 ```
 
-刷新页面后，完成基础课即可继续使用真实数据的 **01 → 05** 路径，不需要先懂 Trace：
+刷新页面后，可继续使用真实数据的 **01 → 05** 路径，不需要先懂 Trace：
 
 1. **看结论**：用“任务 / 过程 / 断点 / 裁判”四张卡回答这次要做什么、实际做了什么、Loop 停在哪里、Eval 为什么判输赢；
 2. **认零件**：按主轨、条件插件、旁路证据查看 Task、Context、Model、Loop、Finish、Tool、Approval、Compaction、Trace 和 Eval；卡片默认收起，展开后看作用、进入时机、架构位置、本次状态和源码入口；
@@ -165,7 +186,7 @@ python3 -m unittest discover -s tests -v
 
 覆盖工具 Schema、工作目录越权、符号链接逃逸、参数回传、审批拒绝和最大步数等行为。
 
-当前共有 80 个确定性测试，覆盖 Token usage 提取、Context Snapshot、上下文窗口配置、长文件分页、有界截断、M1/M1.2 fixture、group 指标、压缩触发、证据提取、tool-call 协议、模型摘要回退、摘要成本分账、真实工具目录、报告导出、任务契约、fixture 摘要、旧 Trace 关联、轮次故事、工具路径、Loop journey、因果边、episode、check 分类、A/B 首分叉、分页剩余语义、continuation gap 与默认学习路径结构。
+当前共有 89 个确定性测试，覆盖 Token usage 提取、Context Snapshot、上下文窗口配置、长文件分页、有界截断、M1/M1.2 fixture、group 指标、压缩触发、证据提取、tool-call 协议、模型摘要回退、摘要成本分账、真实工具目录、报告导出、任务契约、fixture 摘要、旧 Trace 关联、轮次故事、工具路径、Loop journey、因果边、episode、check 分类、A/B 首分叉、分页剩余语义、continuation gap、默认学习路径结构，以及乐高装配结果、状态独立性、耗时公式和无执行通道。
 
 ## 运行评测
 
@@ -268,11 +289,12 @@ scripts/
   export_dashboard.py         将 Eval JSON 只读导出为本地 Dashboard 数据
   run_eval.py                 评测执行器
 dashboard/
-  index.html                  从零建造 + 五步学习 + 四个深挖视图的语义结构
-  styles.css                  实验台、课程装配、学习路径、Loop、测试与响应式视觉
+  index.html                  从零建造 + 五步学习 + 四个深挖视图 + 乐高实验的语义结构
+  styles.css                  实验台、课程装配、乐高工作台、学习路径、Loop、测试与响应式视觉
   evolution.js                7 章课程、检查题、Tool/Skill 对照与后续路线
+  lego.js                     固定任务、8 零件目录、4 预设、确定性运行与 A/B 比较
   story.js                    轮次、因果边、episode、check、分页语义、continuation gap 与 A/B 派生纯函数
-  app.js                      课程交互、数据加载、五步学习、故事、回放、拆解与 A/B 对比
+  app.js                      课程交互、数据加载、乐高装配、故事、回放、拆解与 A/B 对比
 tests/                        不依赖模型的确定性测试
 docs/
   CONSTITUTION.md             长期工程原则与质量门禁
@@ -323,13 +345,18 @@ docs/
       plan.md                 静态课程数据与只读实验台方案
       tasks.md                课程、交互、响应式与浏览器验收任务账本
       implement.md            课程交付、QA 证据、偏差与安全边界
+    m1.8-agent-lego-lab/
+      spec.md                 8 零件自由装配、确定性模拟、A/B 与实验边界规格
+      plan.md                 纯前端教学模块与三平面工作台方案
+      tasks.md                装配、状态语义、响应式与浏览器验收任务账本
+      implement.md            乐高交付、指标、QA 证据、拖拽限制与安全边界
   templates/                  后续规格模板
   decisions/                  ADR 技术决策（含 ADR-004 只读投影）
 ```
 
 ## 下一步
 
-M1.2 已完成历史压缩机制、三策略评测和负面结果记录；M1.3 已把模块、工具、Loop 和实验差异做成真实数据的只读视图；M1.4 按轮次讲故事、突出实际工具插槽并定位 A/B 首分叉；M1.5 进一步解释任务契约、fixture、可观察因果、check 目的与实验边界；M1.6 把真实解剖改成五步学习路径；M1.7 再把入口前移到“从零建造”，用 7 次撞墙与最小补丁解释每个零件为什么出现。这些阶段只提升学习与可解释性，不改变 Agent 行为，也没有新增 Live Eval。当前证据仍显示压缩能降低成本，但**没有稳定提高任务成功率的证据**，因此默认保持 `off`。
+M1.2 已完成历史压缩机制、三策略评测和负面结果记录；M1.3 已把模块、工具、Loop 和实验差异做成真实数据的只读视图；M1.4 按轮次讲故事、突出实际工具插槽并定位 A/B 首分叉；M1.5 进一步解释任务契约、fixture、可观察因果、check 目的与实验边界；M1.6 把真实解剖改成五步学习路径；M1.7 再把入口前移到“从零建造”，用 7 次撞墙与最小补丁解释每个零件为什么出现；M1.8 让学习者自由拆装 8 个零件，观察有无组件对动作、安全、证据和验收的影响。这些阶段只提升学习与可解释性，不改变 Agent 行为，也没有新增 Live Eval。当前证据仍显示压缩能降低成本，但**没有稳定提高任务成功率的证据**，因此默认保持 `off`。
 
 1. 可选：为压缩证据时序、重复压缩和多次重复实验单独开下一份规格
 2. M2：`apply_patch`、修改后自动测试和验证修复闭环

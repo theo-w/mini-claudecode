@@ -2,6 +2,7 @@
 
 const Story = globalThis.AgentStory;
 const Evolution = globalThis.AgentEvolution;
+const Lego = globalThis.AgentLego;
 
 const state = {
   data: null,
@@ -10,6 +11,14 @@ const state = {
   buildStep: 0,
   buildAnswers: {},
   learnStep: 1,
+  legoSelection: new Set(Lego?.DEFAULT_SELECTION || []),
+  legoResult: null,
+  legoPending: null,
+  legoRuns: [],
+  legoNextRunNumber: 1,
+  legoRunning: false,
+  legoVisibleEvents: 0,
+  legoTimer: null,
   runId: null,
   taskId: null,
   eventIndex: 0,
@@ -233,7 +242,7 @@ function preferredRecord(run) {
 }
 
 function syncViewVisibility() {
-  const buildView = state.view === "build";
+  const standaloneView = ["build", "lego"].includes(state.view);
   document.querySelectorAll(".view-tab").forEach((tab) => {
     const active = tab.dataset.view === state.view;
     tab.classList.toggle("active", active);
@@ -243,9 +252,9 @@ function syncViewVisibility() {
   document.querySelectorAll(".view-panel").forEach((panel) => {
     panel.hidden = panel.id !== `view-${state.view}`;
   });
-  $("dashboard-content").hidden = buildView || !state.data;
-  $("empty-state").hidden = buildView || state.dataState !== "missing";
-  $("error-state").hidden = buildView || state.dataState !== "error";
+  $("dashboard-content").hidden = standaloneView || !state.data;
+  $("empty-state").hidden = standaloneView || state.dataState !== "missing";
+  $("error-state").hidden = standaloneView || state.dataState !== "error";
 }
 
 function switchView(view) {
@@ -259,6 +268,10 @@ function switchView(view) {
 function renderView(view) {
   if (view === "build") {
     renderBuild();
+    return;
+  }
+  if (view === "lego") {
+    renderLego();
     return;
   }
   if (!state.data || !Story) return;
@@ -277,6 +290,7 @@ function renderAll() {
   renderReplay();
   renderAnatomy();
   renderCompare();
+  if (state.view === "lego") renderLego();
 }
 
 function buildCorrectIndex(chapter) {
@@ -483,10 +497,15 @@ function renderBuildFuture(chapter) {
   add(cta,
     h("div", "", h("p", "eyebrow", "NEXT · REAL TRACE"), h("h3", "", "现在把同一套问题带到真实运行里"), h("p", "", "真实解剖不要求你先相信课程。它会打开一次实际 Trace，让你逐个检查工具、Observation、Loop、checks 和最终交付。")),
     h("span", "build-final-note", state.dataState === "ready" ? "真实数据已就绪" : "需要导出 data.json"));
-  const button = h("button", "build-enter-trace", "进入真实解剖 →");
-  button.type = "button";
-  button.addEventListener("click", () => switchView("learn"));
-  cta.append(button);
+  const legoButton = h("button", "build-enter-lego", "先玩自由装配 →");
+  legoButton.type = "button";
+  legoButton.addEventListener("click", () => switchView("lego"));
+  const traceButton = h("button", "build-enter-trace", "进入真实解剖 →");
+  traceButton.type = "button";
+  traceButton.addEventListener("click", () => switchView("learn"));
+  const actions = h("div", "build-final-actions");
+  actions.append(legoButton, traceButton);
+  cta.append(actions);
   section.append(cta);
   return section;
 }
@@ -603,6 +622,574 @@ function setBuildStep(step, options = {}) {
   const heading = $("build-chapter-title");
   if (settings.focus) heading?.focus({ preventScroll: true });
   if (settings.scroll) $("build-content")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+
+function legoSelectionIds() {
+  return Lego ? Lego.normalizeSelection(state.legoSelection) : [];
+}
+
+function resetLegoCurrentResult() {
+  state.legoResult = null;
+  state.legoPending = null;
+  state.legoVisibleEvents = 0;
+}
+
+function toggleLegoComponent(id) {
+  if (!Lego || state.legoRunning || !Lego.componentById(id)) return;
+  const selection = new Set(state.legoSelection);
+  if (selection.has(id)) selection.delete(id);
+  else selection.add(id);
+  state.legoSelection = selection;
+  resetLegoCurrentResult();
+  renderLego();
+}
+
+function loadLegoPreset(presetId) {
+  if (!Lego || state.legoRunning) return;
+  const preset = Lego.PRESETS.find((item) => item.id === presetId);
+  if (!preset) return;
+  state.legoSelection = new Set(preset.selection);
+  resetLegoCurrentResult();
+  renderLego();
+}
+
+function loadLegoHistoryRun(run) {
+  if (!Lego || state.legoRunning || !run) return;
+  state.legoSelection = new Set(run.selection);
+  resetLegoCurrentResult();
+  renderLego();
+  $("view-lego")?.querySelector(".lego-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderLegoTask() {
+  const task = Lego?.TASK;
+  if (!task) return;
+  if ($("lego-task-title")) $("lego-task-title").textContent = task.title;
+  if ($("lego-task-prompt")) $("lego-task-prompt").textContent = task.prompt;
+  if ($("lego-task-fixture")) $("lego-task-fixture").textContent = task.fixture;
+  const root = $("lego-task-checks");
+  if (!root) return;
+  clear(root);
+  task.checks.forEach((check, index) => {
+    const item = h("article", "lego-task-check");
+    add(item,
+      h("span", "lego-task-check-index", `0${index + 1}`),
+      h("div", "", h("strong", "", check.label), h("small", "", check.evidence)),
+      h("span", "lego-task-check-target", index === 2 ? "exit 0" : "required"));
+    root.append(item);
+  });
+  root.append(h("p", "lego-task-expected", `验收目标：${task.expected}`));
+}
+
+function renderLegoShelf() {
+  const root = $("lego-shelf");
+  if (!root || !Lego) return;
+  clear(root);
+  Lego.GROUPS.forEach((group) => {
+    const section = h("section", "lego-shelf-group");
+    const head = h("div", "lego-shelf-group-head");
+    add(head, h("strong", "", group.label), h("small", "", group.hint));
+    section.append(head);
+    const cards = h("div", "lego-shelf-cards");
+    Lego.COMPONENTS.filter((component) => component.group === group.id).forEach((component) => {
+      const selected = state.legoSelection.has(component.id);
+      const card = h("button", `lego-part-card accent-${component.accent}${selected ? " is-selected" : ""}`);
+      card.type = "button";
+      card.dataset.legoComponent = component.id;
+      card.draggable = !selected && !state.legoRunning;
+      card.disabled = state.legoRunning;
+      card.setAttribute("aria-pressed", String(selected));
+      card.setAttribute("aria-label", `${selected ? "拆下" : "装入"} ${component.name}：${component.definition}`);
+      card.title = `${component.definition} ${component.enters}`;
+      const headRow = h("span", "lego-part-card-head");
+      add(headRow,
+        h("span", "lego-part-icon", component.icon),
+        h("span", "lego-part-card-name", h("strong", "", component.name), h("small", "", component.type)),
+        h("span", "lego-part-card-state", selected ? "已装" : "＋"));
+      const method = h("code", "lego-part-method", component.method);
+      const location = h("small", "lego-part-location", component.location);
+      const timing = h("small", "lego-part-timing", `介入时机 · ${component.enters}`);
+      add(card, headRow, method, location, timing);
+      card.addEventListener("click", () => toggleLegoComponent(component.id));
+      card.addEventListener("dragstart", (event) => {
+        if (state.legoRunning) {
+          event.preventDefault();
+          return;
+        }
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("text/lego-component", component.id);
+        event.dataTransfer.setData("text/plain", component.id);
+        card.classList.add("is-dragging");
+      });
+      card.addEventListener("dragend", () => card.classList.remove("is-dragging"));
+      cards.append(card);
+    });
+    section.append(cards);
+    root.append(section);
+  });
+}
+
+function renderLegoPresets() {
+  const root = $("lego-presets");
+  if (!root || !Lego) return;
+  clear(root);
+  Lego.PRESETS.forEach((preset) => {
+    const active = JSON.stringify(legoSelectionIds()) === JSON.stringify(Lego.normalizeSelection(preset.selection));
+    const button = h("button", `lego-preset${active ? " active" : ""}`);
+    button.type = "button";
+    button.disabled = state.legoRunning;
+    button.setAttribute("aria-pressed", String(active));
+    add(button, h("strong", "", preset.label), h("small", "", preset.detail), h("span", "", active ? "当前" : "装入 →"));
+    button.addEventListener("click", () => loadLegoPreset(preset.id));
+    root.append(button);
+  });
+}
+
+function renderLegoBrick(component, activeIds) {
+  if (!component) return null;
+  const selected = state.legoSelection.has(component.id);
+  const active = activeIds.includes(component.id);
+  const brick = h("button", `lego-brick accent-${component.accent}${selected ? " installed" : " empty"}${active ? " is-working" : ""}`);
+  brick.type = "button";
+  brick.dataset.legoComponent = component.id;
+  brick.setAttribute("aria-pressed", String(selected));
+  brick.setAttribute("aria-label", selected ? `拆下 ${component.name}` : `装入 ${component.name}`);
+  brick.disabled = state.legoRunning;
+  if (selected) {
+    const type = h("span", "lego-brick-type", component.type);
+    const remove = h("span", "lego-brick-remove", "点击拆下");
+    add(brick,
+      h("span", "lego-brick-top", h("span", "lego-brick-icon", component.icon), type, remove),
+      h("strong", "", component.name),
+      h("code", "", component.method),
+      h("small", "", component.location),
+      h("small", "lego-brick-timing", `介入 · ${component.enters}`),
+      h("span", "lego-brick-status", active ? "● 正在参与" : "● 已接通"));
+  } else {
+    add(brick,
+      h("span", "lego-empty-plus", "＋"),
+      h("strong", "", `${component.name} · 空插槽`),
+      h("small", "", component.method),
+      h("span", "lego-empty-hint", "点按装入这个零件"));
+  }
+  brick.addEventListener("click", () => toggleLegoComponent(component.id));
+  return brick;
+}
+
+function renderLegoBoard() {
+  const root = $("lego-board");
+  if (!root || !Lego) return;
+  clear(root);
+  const activeIds = state.legoRunning && state.legoPending
+    ? state.legoPending.events[Math.max(0, state.legoVisibleEvents - 1)]?.actors || []
+    : [];
+
+  const model = h("article", "lego-model-base");
+  add(model,
+    h("div", "lego-studs", h("i", ""), h("i", ""), h("i", ""), h("i", ""), h("i", ""), h("i", "")),
+    h("div", "lego-model-base-copy", h("span", "", "FIXED BASE · MODEL"), h("strong", "", "scripted-agent-v1"), h("small", "", "理解任务 + 生成下一步 · 始终存在，不可拆")),
+    h("span", "lego-model-state", activeIds.includes("model") ? "生成中" : "待命"));
+  root.append(model);
+
+  const laneSpecs = [
+    {
+      id: "action",
+      eyebrow: "ACTION PLANE",
+      title: "工具动作面",
+      route: "model → Tool Schema → Harness → workspace",
+      components: Lego.COMPONENTS.filter((component) => component.group === "action"),
+      columns: "tools",
+    },
+    {
+      id: "runtime",
+      eyebrow: "LOOP ENGINE",
+      title: "决策回路",
+      route: "tool_result → messages → model → next decision",
+      components: Lego.COMPONENTS.filter((component) => component.group === "runtime"),
+      columns: "runtime",
+    },
+    {
+      id: "control",
+      eyebrow: "CONTROL PLANE",
+      title: "治理与证据",
+      route: "before side effect → after run",
+      components: Lego.COMPONENTS.filter((component) => component.group === "control"),
+      columns: "control",
+    },
+  ];
+  laneSpecs.forEach((lane) => {
+    const section = h("section", `lego-lane lego-lane-${lane.id}`);
+    const head = h("div", "lego-lane-head");
+    add(head,
+      h("div", "", h("span", "eyebrow", lane.eyebrow), h("h3", "", lane.title)),
+      h("code", "", lane.route));
+    const grid = h("div", `lego-lane-grid ${lane.columns}`);
+    lane.components.forEach((component) => grid.append(renderLegoBrick(component, activeIds)));
+    section.append(head, grid);
+    root.append(section);
+  });
+
+  const summary = $("lego-selection-summary");
+  if (summary) {
+    const components = Lego.selectedComponents(state.legoSelection);
+    summary.textContent = components.length
+      ? `${components.length} 个可选零件 + 固定 Model · ${components.map((component) => component.name).join(" / ")}`
+      : "只有固定 Model。建议先运行一次，看看没有工具时会卡在哪里。";
+  }
+}
+
+function legoEventKindLabel(kind) {
+  return {
+    task: "任务",
+    model: "模型",
+    tool: "工具",
+    observation: "观察",
+    guardrail: "边界",
+    registry: "契约",
+    eval: "验收",
+    system: "系统",
+  }[kind] || kind;
+}
+
+function legoLog(result, visibleCount, running) {
+  const log = h("div", `lego-event-log${running ? " is-running" : ""}`);
+  const events = (result?.events || []).slice(0, visibleCount);
+  if (!events.length) {
+    log.append(h("p", "lego-log-empty", "运行后，模型回合、工具动作和 Observation 会依次出现在这里。"));
+    return log;
+  }
+  events.forEach((event) => {
+    const item = h("article", `lego-event kind-${event.kind}`);
+    const meta = h("div", "lego-event-meta");
+    add(meta,
+      h("span", "lego-event-sequence", String(event.sequence).padStart(2, "0")),
+      h("strong", "", legoEventKindLabel(event.kind)),
+      event.status ? h("span", `lego-event-status status-${String(event.status).toLowerCase()}`, event.status) : null);
+    add(item, meta, h("h4", "", event.title), h("p", "", event.detail));
+    log.append(item);
+  });
+  if (running) log.append(h("div", "lego-log-cursor", "▋ 正在装配下一块…"));
+  requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
+  return log;
+}
+
+function legoGovernanceRows(result) {
+  return [
+    {
+      label: "Tool Registry",
+      value: result.registryLabel,
+      state: result.registryStatus === "ACTIVE" ? "good" : "warn",
+    },
+    {
+      label: "Guardrail",
+      value: result.safetyLabel,
+      state: result.safetyStatus === "PASS" ? "good" : "warn",
+    },
+    {
+      label: "Trace",
+      value: result.traceStatus === "ON" ? `${result.events.length} 个可观察事件` : "系统未记录运行轨迹",
+      state: result.traceStatus === "ON" ? "good" : "warn",
+    },
+    {
+      label: "Eval",
+      value: result.evalLabel,
+      state: result.evalStatus === "PASS" ? "good" : result.evalStatus === "FAIL" ? "bad" : "warn",
+    },
+  ];
+}
+
+function renderLegoResult() {
+  const root = $("lego-result");
+  if (!root || !Lego) return;
+  clear(root);
+  const runButton = $("lego-run-button");
+  const clearButton = $("lego-clear-button");
+  if (runButton) {
+    runButton.disabled = state.legoRunning;
+    runButton.textContent = state.legoRunning ? "装配运行中…" : state.legoResult ? "▶ 再运行一次" : "▶ 运行装配";
+  }
+  if (clearButton) clearButton.disabled = state.legoRunning || state.legoSelection.size === 0;
+  const badge = $("lego-run-badge");
+
+  if (state.legoRunning && state.legoPending) {
+    const result = state.legoPending;
+    const progress = Math.min(100, (state.legoVisibleEvents / result.events.length) * 100);
+    if (badge) {
+      badge.textContent = `运行中 ${state.legoVisibleEvents}/${result.events.length}`;
+      badge.className = "lego-run-badge is-running";
+    }
+    const loading = h("div", "lego-result-running");
+    add(loading,
+      h("div", "lego-running-copy", h("span", "lego-running-spinner", ""), h("div", "", h("strong", "", "装配正在按顺序运行"), h("p", "", "教学视图只重放确定性事件，不发起网络请求，也不执行工具。"))),
+      h("div", "lego-progress-track", h("span", "", "")));
+    loading.querySelector(".lego-progress-track span").style.width = `${progress}%`;
+    root.append(loading, legoLog(result, state.legoVisibleEvents, true));
+    return;
+  }
+
+  if (!state.legoResult) {
+    if (badge) {
+      badge.textContent = "尚未运行";
+      badge.className = "lego-run-badge";
+    }
+    const guide = h("div", "lego-result-empty");
+    add(guide,
+      h("span", "lego-result-empty-mark", "?"),
+      h("h3", "", "先空手跑一次"),
+      h("p", "", "当前装配没有运行结果。建议从只有 Model 开始，再加一个零件。不要一次打开全部，否则很难判断差异来自哪里。"),
+      h("div", "lego-start-steps",
+        h("span", "", "01 运行空装配"),
+        h("span", "", "02 只加一个零件"),
+        h("span", "", "03 看 A → B")),
+      h("small", "", "页面会保留最近 6 次装配，最多自动比较最近两次。"));
+    root.append(guide);
+    return;
+  }
+
+  const result = state.legoResult;
+  if (badge) {
+    badge.textContent = `${result.statusLabel} · ${result.completed}/${result.total}`;
+    badge.className = `lego-run-badge is-${result.statusTone}`;
+  }
+
+  const verdict = h("div", `lego-verdict tone-${result.statusTone}`);
+  const verdictScore = h("div", "lego-verdict-score");
+  add(verdictScore, h("strong", "", `${result.completed}`), h("span", "", `/ ${result.total}`), h("small", "", "动作完成"));
+  const verdictCopy = h("div", "lego-verdict-copy");
+  add(verdictCopy,
+    h("span", `lego-status-pill tone-${result.statusTone}`, result.taskStatus),
+    h("h3", "", result.statusLabel),
+    h("p", "", result.statusDetail));
+  verdict.append(verdictScore, verdictCopy);
+  root.append(verdict);
+
+  const metrics = h("div", "lego-result-metrics");
+  [
+    ["模拟耗时", Lego.formatSeconds(result.estimatedMs), "非网络实测"],
+    ["模型回合", String(result.modelTurns), "每一轮都读 Observation"],
+    ["工具调用", String(result.toolCalls), "脚本内动作次数"],
+    ["验收状态", result.evalStatus, result.evalStatus === "OFF" ? "Eval 未装配" : "按任务契约"],
+  ].forEach(([label, value, note]) => {
+    const item = h("article", "lego-result-metric");
+    add(item, h("span", "", label), h("strong", "", value), h("small", "", note));
+    metrics.append(item);
+  });
+  root.append(metrics);
+
+  const checks = h("section", "lego-run-checks");
+  add(checks, h("div", "lego-result-section-head", h("strong", "", "任务交付检查"), h("span", "", "不是模型自述")));
+  const checkList = h("ol", "lego-check-results");
+  result.checks.forEach((check) => {
+    const item = h("li", check.passed ? "passed" : "failed");
+    add(item,
+      h("span", "lego-check-symbol", check.passed ? "✓" : "×"),
+      h("div", "", h("strong", "", check.label), h("small", "", check.evidence)),
+      h("span", "", check.passed ? "有证据" : "未发生"));
+    checkList.append(item);
+  });
+  checks.append(checkList);
+  root.append(checks);
+
+  const explanation = h("section", "lego-explanation");
+  add(explanation,
+    h("span", "lego-explanation-label", "为什么是这个结果"),
+    h("p", "", result.narrative));
+  root.append(explanation);
+
+  const governance = h("section", "lego-governance");
+  add(governance, h("div", "lego-result-section-head", h("strong", "", "系统能力分账"), h("span", "", "完成 ≠ 可信")));
+  legoGovernanceRows(result).forEach((row) => {
+    const item = h("div", `lego-governance-row ${row.state}`);
+    add(item, h("span", "lego-governance-dot", ""), h("strong", "", row.label), h("span", "", row.value));
+    governance.append(item);
+  });
+  root.append(governance);
+
+  const notes = h("section", "lego-governance-notes");
+  add(notes, h("strong", "", "再检查一次边界"));
+  const list = h("ul", "");
+  result.governanceNotes.forEach((note) => list.append(h("li", "", note)));
+  notes.append(list);
+  root.append(notes);
+
+  const logHead = h("div", "lego-result-section-head lego-log-head");
+  add(logHead, h("strong", "", "本次事件流"), h("span", "", "教学重放"));
+  root.append(logHead, legoLog(result, result.events.length, false));
+
+  const details = h("details", "lego-cost-details");
+  add(details, h("summary", "", "模拟耗时怎么算？"), h("p", "", Lego.costBasisText()), h("small", "", "它只用于比较装配复杂度，不是模型或工具的实测性能。"));
+  root.append(details);
+}
+
+function legoConfigChips(run) {
+  const root = h("div", "lego-config-chips");
+  const ids = Lego.normalizeSelection(run?.selection || []);
+  if (!ids.length) root.append(h("span", "lego-config-chip empty", "只有 Model"));
+  ids.forEach((id) => {
+    const component = Lego.componentById(id);
+    if (!component) return;
+    const chip = h("span", `lego-config-chip accent-${component.accent}`, h("i", "", component.icon), component.name);
+    chip.title = `${component.method} · ${component.location}`;
+    root.append(chip);
+  });
+  return root;
+}
+
+function legoMetricValue(metric, run, value) {
+  if (metric.key === "task") return `${value} · ${run.statusLabel}`;
+  if (metric.key === "safety") return run.safetyLabel;
+  if (metric.key === "evidence") return run.evidenceLabel;
+  return value;
+}
+
+function renderLegoCompare() {
+  const root = $("lego-compare");
+  if (!root || !Lego) return;
+  clear(root);
+  if (state.legoRuns.length < 2) {
+    const empty = h("div", "lego-compare-empty");
+    const a = state.legoRuns[0];
+    add(empty,
+      h("div", "lego-compare-empty-track",
+        h("div", "", h("span", "", "A"), h("strong", "", a ? `运行 #${a.runNumber}` : "还没跑")),
+        h("span", "lego-compare-arrow", "→"),
+        h("div", "", h("span", "", "B"), h("strong", "", "换一个装配"))),
+      h("p", "", a ? "已有一次结果。现在只改动一个零件，再次运行，就能看到同一模型下发生的变化。" : "先运行一次；再改变装配并运行第二次。这里会自动并排比较结果。"));
+    if (a) {
+      const snapshot = h("div", "lego-compare-preview");
+      add(snapshot, legoConfigChips(a), h("span", `lego-status-pill tone-${a.statusTone}`, `${a.taskStatus} · ${a.completed}/${a.total}`));
+      empty.append(snapshot);
+    }
+    root.append(empty);
+    return;
+  }
+
+  const a = state.legoRuns[state.legoRuns.length - 2];
+  const b = state.legoRuns[state.legoRuns.length - 1];
+  const comparison = Lego.compareRuns(a, b);
+  const runCards = h("div", "lego-compare-runs");
+  [["A", a], ["B", b]].forEach(([letter, run]) => {
+    const card = h("article", `lego-compare-run run-${letter.toLowerCase()}`);
+    add(card,
+      h("div", "lego-compare-run-head", h("span", "", letter), h("div", "", h("strong", "", `运行 #${run.runNumber}`), h("small", "", new Date(run.completedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })))),
+      legoConfigChips(run),
+      h("div", "lego-compare-run-result", h("strong", "", `${run.completed}/${run.total}`), h("span", `lego-status-pill tone-${run.statusTone}`, run.taskStatus)));
+    runCards.append(card);
+  });
+  root.append(runCards);
+
+  const table = h("div", "lego-compare-table");
+  const header = h("div", "lego-compare-row lego-compare-header");
+  add(header, h("span", "lego-metric-label", "指标"), h("span", "lego-metric-value", "A · 前一次"), h("span", "lego-metric-value", "B · 后一次"), h("span", "lego-metric-delta", "变化"));
+  table.append(header);
+  comparison.metrics.forEach((metric) => {
+    const row = h("div", `lego-compare-row metric-${metric.key}`);
+    add(row,
+      h("strong", "lego-metric-label", metric.label),
+      h("span", "lego-metric-value", legoMetricValue(metric, a, metric.a)),
+      h("span", "lego-metric-value", legoMetricValue(metric, b, metric.b)),
+      h("span", `lego-delta lego-metric-delta tone-${metric.tone}`, metric.delta));
+    table.append(row);
+  });
+  root.append(table);
+
+  const sameSelection = JSON.stringify(a.selection) === JSON.stringify(b.selection);
+  const completionDelta = b.completed - a.completed;
+  const durationDelta = b.estimatedSeconds - a.estimatedSeconds;
+  let insight = "装配和结果都值得逐项读：完成度提高不一定意味着总成本更低，治理能力增强也不等于任务自动成功。";
+  if (sameSelection) {
+    insight = "两次装配相同，所有结果也相同。这说明当前沙盒是确定性的：同一装配不会因为“再跑一次”产生随机差异。";
+  } else if (completionDelta > 0 && backwardGovernanceAdded(a, b)) {
+    insight = `B 多完成了 ${completionDelta} 项，但模拟耗时增加了 ${durationDelta.toFixed(2)}s。这是能力与成本的明确取舍，不是单一总分。`;
+  } else if (completionDelta > 0) {
+    insight = `B 多完成了 ${completionDelta} 项。先确认新增零件补上了哪个具体断点，再决定是否值得保留。`;
+  } else if (b.taskStatus === "PASS" && a.taskStatus === "UNVERIFIED") {
+    insight = "两次的动作完成度相同，但 B 多了任务验收。这里改变的不是“能不能做”，而是“系统能不能给出可信结论”。";
+  } else if (b.safetyStatus !== a.safetyStatus || b.evidenceStatus !== a.evidenceStatus) {
+    insight = "动作结果没有明显变化，B 改变的是安全、证据或验收能力。不要把治理层组件误读成模型能力升级。";
+  }
+  const insightCard = h("div", "lego-compare-insight");
+  add(insightCard, h("span", "", "怎么读这次差异"), h("p", "", insight), h("small", "", "同一脚本化模型 · 同一任务 · 确定性模拟"));
+  root.append(insightCard);
+}
+
+function backwardGovernanceAdded(a, b) {
+  const aIds = new Set(a.selection);
+  const bIds = new Set(b.selection);
+  return ["guardrail", "trace", "eval"].some((id) => !aIds.has(id) && bIds.has(id));
+}
+
+function renderLegoHistory() {
+  const root = $("lego-history");
+  if (!root || !Lego) return;
+  clear(root);
+  if (!state.legoRuns.length) {
+    root.append(h("p", "lego-history-empty", "完成第一次运行后，这里会保存装配、结果和模拟耗时。刷新页面会清空记录。"));
+    return;
+  }
+  [...state.legoRuns].reverse().forEach((run) => {
+    const card = h("article", `lego-history-card tone-${run.statusTone}`);
+    const head = h("div", "lego-history-head");
+    add(head,
+      h("span", "lego-history-number", `#${String(run.runNumber).padStart(2, "0")}`),
+      h("div", "", h("strong", "", `${run.completed}/${run.total} · ${run.taskStatus}`), h("small", "", `${Lego.formatSeconds(run.estimatedMs)} · ${run.toolCalls} 次工具调用`)));
+    const load = h("button", "lego-history-load", "载入装配");
+    load.type = "button";
+    load.disabled = state.legoRunning;
+    load.addEventListener("click", () => loadLegoHistoryRun(run));
+    add(card,
+      head,
+      legoConfigChips(run),
+      h("div", "lego-history-foot", h("span", "", run.narrative), load));
+    root.append(card);
+  });
+}
+
+function renderLego() {
+  if (!Lego) return;
+  renderLegoTask();
+  renderLegoShelf();
+  renderLegoPresets();
+  renderLegoBoard();
+  renderLegoResult();
+  renderLegoCompare();
+  renderLegoHistory();
+}
+
+function startLegoRun() {
+  if (!Lego || state.legoRunning) return;
+  const result = Lego.simulateRun(legoSelectionIds());
+  state.legoPending = result;
+  state.legoResult = null;
+  state.legoVisibleEvents = 0;
+  state.legoRunning = true;
+  if (state.legoTimer) clearInterval(state.legoTimer);
+  renderLego();
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  const tickMs = reducedMotion ? 20 : 175;
+  state.legoTimer = window.setInterval(() => {
+    if (!state.legoPending) return;
+    state.legoVisibleEvents = Math.min(state.legoPending.events.length, state.legoVisibleEvents + 1);
+    renderLegoBoard();
+    renderLegoResult();
+    if (state.legoVisibleEvents < state.legoPending.events.length) return;
+    clearInterval(state.legoTimer);
+    state.legoTimer = null;
+    const completed = {
+      ...state.legoPending,
+      runNumber: state.legoNextRunNumber,
+      completedAt: new Date().toISOString(),
+    };
+    state.legoNextRunNumber += 1;
+    state.legoRuns.push(completed);
+    if (state.legoRuns.length > 6) state.legoRuns.shift();
+    state.legoResult = completed;
+    state.legoPending = null;
+    state.legoRunning = false;
+    state.legoVisibleEvents = completed.events.length;
+    renderLego();
+  }, tickMs);
 }
 
 function eventIndexForStep(record, step) {
@@ -3151,6 +3738,7 @@ function showEmpty() {
   state.dataState = "missing";
   syncViewVisibility();
   if (state.view === "build") renderBuild();
+  if (state.view === "lego") renderLego();
   disableControls(true);
 }
 
@@ -3159,6 +3747,7 @@ function showError(message) {
   $("error-message").textContent = message;
   syncViewVisibility();
   if (state.view === "build") renderBuild();
+  if (state.view === "lego") renderLego();
   disableControls(true);
 }
 
@@ -3193,6 +3782,7 @@ async function loadData() {
     renderAll();
     syncViewVisibility();
     if (state.view === "build") renderBuild();
+    if (state.view === "lego") renderLego();
 
   } catch (error) {
     showError(`${error.message}。请检查 data.json，或重新运行导出命令。`);
@@ -3211,6 +3801,33 @@ function bindEvents() {
       tabs[next].focus();
       switchView(tabs[next].dataset.view);
     });
+  });
+  $("lego-run-button").addEventListener("click", startLegoRun);
+  $("lego-clear-button").addEventListener("click", () => {
+    if (state.legoRunning) return;
+    state.legoSelection = new Set();
+    resetLegoCurrentResult();
+    renderLego();
+  });
+  const legoBoard = $("lego-board");
+  legoBoard.addEventListener("dragover", (event) => {
+    if (state.legoRunning) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    legoBoard.classList.add("is-dragover");
+  });
+  legoBoard.addEventListener("dragleave", (event) => {
+    if (!legoBoard.contains(event.relatedTarget)) legoBoard.classList.remove("is-dragover");
+  });
+  legoBoard.addEventListener("drop", (event) => {
+    event.preventDefault();
+    legoBoard.classList.remove("is-dragover");
+    if (state.legoRunning) return;
+    const id = event.dataTransfer.getData("text/lego-component") || event.dataTransfer.getData("text/plain");
+    if (!id || !Lego?.componentById(id) || state.legoSelection.has(id)) return;
+    state.legoSelection = new Set([...state.legoSelection, id]);
+    resetLegoCurrentResult();
+    renderLego();
   });
   $("build-chapter-list").addEventListener("click", (event) => {
     const button = event.target.closest("[data-build-chapter]");
