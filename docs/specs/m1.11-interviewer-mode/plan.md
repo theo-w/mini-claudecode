@@ -1,7 +1,7 @@
 # M1.11 Interviewer Project Brief Plan
 
 - Spec：`spec.md`
-- 状态：Implemented（本地验收完成，等待线上部署复核）
+- 状态：Verified（本地与 Render 线上验收完成）
 - 日期：2026-10-30
 - 关联 ADR：ADR-004（只读投影）
 
@@ -107,5 +107,5 @@
 - [x] Live Eval 不适用并记录原因
 - [x] 桌面/手机浏览器验收
 - [x] 本地七视图回归
-- [ ] Render 线上部署复核
+- [x] Render 线上部署复核（部署提交 `28a4b87`；三入口、零 `data.json` 请求与 `/data.json` 404 均通过）
 - [x] 文档和规格索引更新

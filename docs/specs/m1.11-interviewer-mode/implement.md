@@ -3,7 +3,7 @@
 - Spec：`spec.md`
 - Plan：`plan.md`
 - Tasks：`tasks.md`
-- 状态：Implemented（本地验收完成，等待线上部署复核）
+- 状态：Verified（本地与 Render 线上验收完成）
 - 实施日期：2026-10-30
 - 验证日期：2026-10-30
 
@@ -48,7 +48,7 @@
 | AC-007 | `test_brief_exposes_no_trace_or_execution_channel` 与公开模式请求监听 | Pass |
 | AC-008 | Playwright：1440 × 1000、390 × 844 横向溢出均为 0；console/page/request error 均为 0 | Pass |
 | AC-009 | 100 项 unittest、Python 编译、4 个 JS 文件语法、`git diff --check` | Pass |
-| AC-010 | Render 线上默认速览、三入口与 `/data.json` 404 | Pending，等待部署 |
+| AC-010 | Render 线上默认速览、三入口与 `/data.json` 404 | Pass（部署提交 `28a4b87`） |
 | AC-011 | README、ROADMAP、规格索引与本记录 | Pass |
 
 ## 4. 验证命令
@@ -114,19 +114,43 @@ diff-check-ok
 
 - 本轮没有真实用户样本，因此无法给出“阅读时间降低”“理解正确率提升”等教学收益结论。
 - 100 项测试通过不能转化为 Agent 成功率或招聘转化率。
-- 公开模式只做页面请求短路；数据不公开的最终保证仍依赖 `.gitignore` 与 Render 仅发布 `dashboard/` 静态代码。当前线上 `/data.json` 复核仍需部署后完成。
+- 公开模式只做页面请求短路；数据不公开的最终保证仍依赖 `.gitignore` 与 Render 仅发布 `dashboard/` 静态代码。部署后已复核线上 `/data.json` 返回 404，但该结论针对当前静态发布配置，不代表未来新增路由或后端后仍自动成立。
 
-## 9. 后续工作
+## 9. Render 线上验收
 
-- 部署后验证 Render 默认入口、三个公开视图、CTA、手机布局和 `/data.json` 404。
+- 部署提交：`28a4b87`；确认时间：2026-10-30 11:04 Asia/Shanghai。
+- 线上地址：<https://mini-agent-harness.onrender.com/>。
+- 页面内容标记：`THE 90-SECOND STORY` 与“一键运行基线实验”均已上线。
+
+| 检查 | 1440 x 1000 | 390 x 844 |
+|---|---|---|
+| 默认视图 | `view-brief` | `view-brief` |
+| 公开入口 | 3 个；Build/Lego 均可进入 | 3 个；Build/Lego 均可进入 |
+| 主 CTA | `BLOCKED / UNKNOWN / NONE` | `BLOCKED / UNKNOWN / NONE` |
+| `data.json` 请求 | 0 | 0 |
+| 横向溢出 | 0px | 0px |
+| 页面错误 | 0 | 0 |
+| Hero 首屏范围 | 163.8-606.5px，完整 | 141.6-831.9px，完整 |
+
+数据边界：
+
+```text
+GET https://mini-agent-harness.onrender.com/data.json -> 404
+```
+
+该检查只证明当前 Render 静态站没有公开数据文件；不证明未来新增后端、路由或构建配置时仍然安全。
+
+## 10. 后续工作
+
+- 后续每次涉及公开数据或部署配置的变更，重复零 `data.json` 请求与线上 404 检查。
 - M2 进入真实评测闭环：固定任务、模型版本、成功率、安全、Token 与失败恢复。
 - 若验证教学假设，需单独设计前后测或任务访谈，不以页面自述代替学习效果。
 
-## 10. 完成声明
+## 11. 完成声明
 
 - [x] 本地实现与规格一致
 - [x] 本地验收标准有证据（AC-001–AC-009、AC-011）
 - [x] 测试和静态检查完成（100 项通过）
 - [x] 安全边界描述准确
 - [x] README、ROADMAP、规格索引与实现记录同步
-- [ ] Render 线上验收完成（AC-010）
+- [x] Render 线上验收完成（AC-010，部署提交 `28a4b87`）

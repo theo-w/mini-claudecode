@@ -1,7 +1,7 @@
 # M1.11 Interviewer Project Brief Specification
 
 - Spec ID：`m1.11-interviewer-mode`
-- 状态：Implemented（本地验收完成，等待线上部署复核）
+- 状态：Verified（本地与 Render 线上验收完成）
 - 日期：2026-10-30
 - 验证日期：2026-10-30
 - 里程碑：M1.11
