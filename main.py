@@ -13,7 +13,7 @@ from tools.builtin import build_registry
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Mini Agent Harness v0.12.0")
+    parser = argparse.ArgumentParser(description="Mini Agent Harness v0.13.0")
     parser.add_argument("--provider", choices=["local", "cloud"], help="覆盖 MODEL_PROVIDER")
     parser.add_argument("--model", help="覆盖当前 provider 的模型名")
     parser.add_argument("--workspace", help="允许 Agent 访问的根目录")
@@ -139,7 +139,7 @@ def main() -> int:
         on_event=print_event,
     )
 
-    print("===== Mini Agent Harness v0.12.0 =====")
+    print("===== Mini Agent Harness v0.13.0 =====")
     print(f"模型：{model_config.provider}/{model_config.model}")
     print(f"工作目录：{harness_config.workspace}")
     print(f"上下文窗口预算：{harness_config.context_window_tokens:,} tokens")

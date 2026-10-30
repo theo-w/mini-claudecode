@@ -23,7 +23,8 @@
     </div>
     <div class="header-row">
       <nav class="view-tabs" role="tablist" aria-label="实验台视图">
-        <button class="view-tab active" id="tab-build" role="tab" aria-selected="true" aria-controls="view-build" data-view="build"><span>00</span>从零建造</button>
+        <button class="view-tab" id="tab-brief" role="tab" aria-selected="false" aria-controls="view-brief" data-view="brief" data-public-only="true" hidden><span>00</span>项目速览</button>
+        <button class="view-tab active" id="tab-build" role="tab" aria-selected="true" aria-controls="view-build" data-view="build"><span>01</span>从零建造</button>
         <button class="view-tab" id="tab-learn" role="tab" aria-selected="false" aria-controls="view-learn" data-view="learn"><span>01</span>真实解剖</button>
         <button class="view-tab" id="tab-story" role="tab" aria-selected="false" aria-controls="view-story" data-view="story"><span>02</span>任务故事</button>
         <button class="view-tab" id="tab-replay" role="tab" aria-selected="false" aria-controls="view-replay" data-view="replay"><span>03</span>Loop 回放</button>
@@ -36,6 +37,114 @@
   </header>
 
   <main class="app-main">
+
+    <section id="view-brief" class="view-panel brief-view" role="tabpanel" aria-labelledby="tab-brief" hidden>
+      <header class="brief-hero">
+        <div class="brief-hero-copy">
+          <p class="eyebrow">PROJECT BRIEF · 90 SECONDS</p>
+          <h1>把 Agent 拆成<br><span>能亲手验证的零件</span></h1>
+          <p class="brief-lead">一个面向初学者的 Agent 工程学习实验：先让旧版本撞墙，每次只加一个零件，再分别判断任务是否完成、执行是否受控、过程是否可审计。</p>
+          <div class="brief-actions">
+            <button id="brief-start-lego" class="brief-primary" type="button"><span>01</span> 一键运行基线实验 <b>→</b></button>
+            <button id="brief-start-build" class="brief-secondary" type="button">先读从零建造 <span>7 章</span></button>
+          </div>
+          <p class="brief-boundary"><span class="status-dot"></span>公开教学模拟 · 不调用模型 API · 不执行真实工具</p>
+        </div>
+        <aside class="brief-proof" aria-label="项目证据摘要">
+          <div class="brief-proof-stud" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <div class="brief-proof-head">
+            <span>WHAT IT PROVES</span>
+            <strong>不是再做一个 Claude Code，<br>而是把 Agent 的因果链拆开。</strong>
+          </div>
+          <div class="brief-proof-grid">
+            <div><strong>7</strong><span>章从零建造</span></div>
+            <div><strong>8</strong><span>个可换零件</span></div>
+            <div><strong>256</strong><span>种模拟组合</span></div>
+            <div><strong>100</strong><span>项契约测试</span></div>
+          </div>
+          <p>测试验证工程契约，不等于验证真实模型质量。</p>
+        </aside>
+      </header>
+
+      <section class="brief-story" aria-labelledby="brief-story-title">
+        <div class="brief-section-head">
+          <div><p class="eyebrow">THE 90-SECOND STORY</p><h2 id="brief-story-title">先撞墙，再补一块，最后看三本账</h2></div>
+          <p>面试讲解先从这三步开始，不需要先背所有架构名词。</p>
+        </div>
+        <div class="brief-story-grid">
+          <article class="brief-story-card is-problem">
+            <span class="brief-step">01 · 问题</span>
+            <h3>只有模型，任务卡住</h3>
+            <p>模型能生成“应该读文件”的建议，但没有 Tool 与执行器，真实世界不会发生变化。</p>
+            <code>DELIVERY · BLOCKED</code>
+          </article>
+          <article class="brief-story-card is-change">
+            <span class="brief-step">02 · 干预</span>
+            <h3>每次只加一个零件</h3>
+            <p>Tool 让它能行动；Loop 把 Observation 送回去；Guardrail、Trace、Eval 才让执行可控且可信。</p>
+            <code>+1 PART → RERUN</code>
+          </article>
+          <article class="brief-story-card is-result">
+            <span class="brief-step">03 · 结果</span>
+            <h3>不合成一个总分</h3>
+            <p>完成度、执行安全、可审计性分开判断。一次通过不等于系统可靠，一次失败也能定位断点。</p>
+            <code>DELIVERY / SAFETY / EVIDENCE</code>
+          </article>
+        </div>
+      </section>
+
+      <section class="brief-evidence" aria-labelledby="brief-evidence-title">
+        <article class="brief-case-card">
+          <div class="brief-card-heading"><p class="eyebrow">PROJECT ONE-PAGER</p><h2 id="brief-evidence-title">项目证据卡</h2></div>
+          <dl class="brief-case-grid">
+            <div><dt>目标用户</dt><dd>Agent 初学者、产品经理、转型工程师</dd></div>
+            <div><dt>用户问题</dt><dd>知道组件名词，但不知道何时参与、为什么出现</dd></div>
+            <div><dt>核心假设</dt><dd>受控的“有 / 无零件”对照，比概念图更容易建立因果理解</dd></div>
+            <div><dt>当前交付</dt><dd>7 章课程、8 个零件、256 种模拟组合、公开部署</dd></div>
+            <div><dt>工程证据</dt><dd>SDD 规格链路、100 项确定性测试、桌面 / 移动端验收</dd></div>
+            <div><dt>当前局限</dt><dd>不调用真实模型、不执行真实工具；教学效果与真实任务成功率仍待验证</dd></div>
+          </dl>
+          <p class="brief-next"><strong>下一步</strong> M2 真实评测：固定任务、模型版本、成功率、安全、Token 与失败恢复。</p>
+        </article>
+
+        <article class="brief-layers-card">
+          <div class="brief-card-heading"><p class="eyebrow">EVIDENCE, LAYERED</p><h2>四种证据，不能混着说</h2></div>
+          <div class="brief-layer-list">
+            <div class="brief-layer">
+              <span class="brief-layer-index">01</span>
+              <div><strong>工程正确性</strong><p>100 项确定性测试</p></div>
+              <small>证明契约、边界与数据逻辑；不能证明真实模型效果。</small>
+            </div>
+            <div class="brief-layer">
+              <span class="brief-layer-index">02</span>
+              <div><strong>教学有效性</strong><p>尚未完成用户实验</p></div>
+              <small>后续需验证初学者能否更快说清组件时机与因果关系。</small>
+            </div>
+            <div class="brief-layer">
+              <span class="brief-layer-index">03</span>
+              <div><strong>Agent 效果</strong><p>确定性机制模拟</p></div>
+              <small>说明装配差异与结果分账，不代表真实任务成功率。</small>
+            </div>
+            <div class="brief-layer">
+              <span class="brief-layer-index">04</span>
+              <div><strong>生产安全</strong><p>公开版零执行通道</p></div>
+              <small>证明展示边界，不等于生产级隔离、权限或稳定性。</small>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="brief-route" aria-labelledby="brief-route-title">
+        <div class="brief-route-heading"><p class="eyebrow">IF YOU HAVE 3 MINUTES</p><h2 id="brief-route-title">面试讲解路线</h2></div>
+        <ol class="brief-route-list">
+          <li><span>00:00</span><strong>问题</strong><p>初学者知道名词，不知道组件何时参与。</p></li>
+          <li><span>00:30</span><strong>基线</strong><p>只有模型，第一步动作就不会发生。</p></li>
+          <li><span>01:10</span><strong>对照</strong><p>每次只加一块，比较三种结果。</p></li>
+          <li><span>02:10</span><strong>边界</strong><p>讲清测试能证明什么、不能证明什么。</p></li>
+        </ol>
+      </section>
+    </section>
+
     <section id="view-build" class="view-panel build-view" role="tabpanel" aria-labelledby="tab-build">
       <header class="build-hero">
         <div class="build-hero-copy">

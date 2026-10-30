@@ -248,9 +248,11 @@ function publicDemoRequested() {
 }
 
 function syncViewVisibility() {
-  const standaloneView = ["build", "lego"].includes(state.view);
+  const standaloneView = ["brief", "build", "lego"].includes(state.view);
   document.querySelectorAll(".view-tab").forEach((tab) => {
-    const supported = !state.publicDemo || ["build", "lego"].includes(tab.dataset.view);
+    const supported = state.publicDemo
+      ? ["brief", "build", "lego"].includes(tab.dataset.view)
+      : tab.dataset.view !== "brief";
     const active = supported && tab.dataset.view === state.view;
     tab.hidden = !supported;
     tab.classList.toggle("active", active);
@@ -261,14 +263,15 @@ function syncViewVisibility() {
     panel.hidden = panel.id !== `view-${state.view}`;
   });
   const runPicker = document.querySelector(".run-picker");
-  if (runPicker) runPicker.hidden = !state.data || state.view === "lego";
+  if (runPicker) runPicker.hidden = !state.data || ["brief", "lego"].includes(state.view);
   $("dashboard-content").hidden = standaloneView || !state.data;
   $("empty-state").hidden = standaloneView || state.dataState !== "missing";
   $("error-state").hidden = standaloneView || state.dataState !== "error";
 }
 
 function switchView(view) {
-  if (state.publicDemo && !["build", "lego"].includes(view)) view = "build";
+  if (state.publicDemo && !["brief", "build", "lego"].includes(view)) view = "brief";
+  if (!state.publicDemo && view === "brief") view = "build";
   if (state.view !== view) stopPlayback();
   state.view = view;
   syncViewVisibility();
@@ -277,6 +280,7 @@ function switchView(view) {
 }
 
 function renderView(view) {
+  if (view === "brief") return;
   if (view === "build") {
     renderBuild();
     return;
@@ -3899,10 +3903,13 @@ function configurePublicDemo() {
   const label = badge?.querySelector(".badge-label");
   if (label) label.textContent = "公开学习实验台";
   if (badge) badge.title = "确定性教学模拟 · 不调用 API · 不执行工具";
+  const briefNumber = document.querySelector("#tab-brief > span");
   const buildNumber = document.querySelector("#tab-build > span");
   const legoNumber = document.querySelector("#tab-lego > span");
+  if (briefNumber) briefNumber.textContent = "00";
   if (buildNumber) buildNumber.textContent = "01";
   if (legoNumber) legoNumber.textContent = "02";
+  if (!["brief", "build", "lego"].includes(state.view)) state.view = "brief";
 }
 
 function showEmpty(publicDemo = false) {
@@ -3927,6 +3934,7 @@ function showError(message) {
 async function loadData() {
   try {
     if (publicDemoRequested()) {
+      state.view = "brief";
       showEmpty(true);
       return;
     }
@@ -3972,7 +3980,7 @@ function bindEvents() {
     tab.addEventListener("click", () => switchView(tab.dataset.view));
     tab.addEventListener("keydown", (event) => {
       if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-      const tabs = [...document.querySelectorAll(".view-tab")];
+      const tabs = [...document.querySelectorAll(".view-tab")].filter((candidate) => !candidate.hidden);
       const index = tabs.indexOf(tab);
       const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : (index - 1 + tabs.length) % tabs.length;
       event.preventDefault();
@@ -3982,6 +3990,11 @@ function bindEvents() {
   });
   $("lego-baseline-button").addEventListener("click", startLegoBaseline);
   $("lego-run-button").addEventListener("click", startLegoRun);
+  $("brief-start-lego").addEventListener("click", () => {
+    switchView("lego");
+    startLegoBaseline();
+  });
+  $("brief-start-build").addEventListener("click", () => switchView("build"));
   $("lego-clear-button").addEventListener("click", () => {
     if (state.legoRunning) return;
     state.legoSelection = new Set();
@@ -4109,5 +4122,6 @@ function bindEvents() {
 }
 
 bindEvents();
-switchView("build");
+if (publicDemoRequested()) configurePublicDemo();
+switchView(state.publicDemo ? "brief" : "build");
 loadData();
